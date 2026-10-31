@@ -1,56 +1,183 @@
 """
-Live Checkpoint 1 Demo Runner for Judges & Mentors (Person A Engine).
-Run with:
-    python -m tests.demo_checkpoint1
+Live Checkpoint 1 Demo & Interactive CLI Runner for Judges & Mentors (Person A Engine).
+
+Usage:
+  1. Default instant demo on built-in polyglot test app:
+       python -m tests.demo_checkpoint1
+
+  2. Scan a judge's custom source code directory (Static Route Map + SAST + Decoy Filter + SCA):
+       python -m tests.demo_checkpoint1 --source "D:/path/to/their/code"
+
+  3. Scan BOTH a judge's source code directory AND their live running localhost website (Full SAST + Live DAST + Correlation):
+       python -m tests.demo_checkpoint1 --source "D:/path/to/their/code" --url "http://localhost:5000"
+
+  4. Export full correlated report to JSON:
+       python -m tests.demo_checkpoint1 --source "D:/path/to/their/code" --url "http://localhost:5000" --out report.json
 """
 
+import argparse
+import hashlib
+import json
 import os
 import time
-from core.schemas import CanonicalFinding, FindingSource, Severity, IssueStatus
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import List, Optional
+
+from core.config import assert_safe_target
+from core.schemas import CanonicalFinding, FindingSource, IssueStatus, RouteEntry, Severity
+from engine.correlator import Correlator
 from engine.route_mapper import RouteMapper
 from engine.sast_scanner import SASTScanner
-from engine.correlator import Correlator
 from engine.sca_reachability import SCAReachabilityEngine
 
 MOCK_SHOP_DIR = os.path.join(os.path.dirname(__file__), "mock_shop_app")
 
 
-def main() -> None:
-    t0 = time.perf_counter()
-    print("=" * 88)
-    print(" GORDON CORRELATE — CHECKPOINT 1 LIVE ENGINE DEMO (PROBLEM 06 · FLAGSHIP)")
-    print("=" * 88)
+def _live_probe_target(base_url: str, routes: List[RouteEntry]) -> List[CanonicalFinding]:
+    """
+    Lightweight built-in live HTTP DAST prober for Checkpoint 1 judge testing.
+    Strictly enforces PRD Rule 1 (`assert_safe_target`) so it only probes localhost/local containers.
+    Probes discovered routes (plus root '/') for:
+      - CWE-89 (SQL Injection error signatures)
+      - CWE-79 (Reflected XSS canary)
+      - CWE-78 (OS Command Injection canary)
+      - CWE-22 (Path Traversal /etc/passwd & win.ini signatures)
+      - CWE-601 (Open Redirect to external host)
+      - CWE-693 (Missing security headers: Content-Security-Policy / X-Frame-Options)
+    """
+    assert_safe_target(base_url)
+    base_url = base_url.rstrip("/")
+    findings: List[CanonicalFinding] = []
+    checked_headers_urls = set()
 
-    # 1. FR-4 & B-7: Polyglot AST Route Map + Call Graph
-    mapper = RouteMapper(MOCK_SHOP_DIR)
-    routes = mapper.scan()
-    print(f"\n[1] FR-4 & B-7 AST ROUTE MAP ({len(routes)} routes extracted across Python & Express):")
-    print("-" * 88)
-    for r in routes:
-        helpers = f" | calls -> {r.called_funcs}" if r.called_funcs else ""
-        print(
-            f"  {r.method:<4} {r.path_pattern:<28} -> {r.func_name}() "
-            f"[{r.file_path}:{r.start_line}-{r.end_line}] "
-            f"(framework={r.framework}, params={r.parameters}){helpers}"
+    # If no routes were extracted from code (e.g. URL-only check), probe root '/'
+    probe_targets = routes if routes else [
+        RouteEntry(
+            method="GET",
+            path_pattern="/",
+            file_path="runtime",
+            func_name="root",
+            start_line=1,
+            end_line=1,
+            parameters=["id", "q", "url", "next", "file", "doc", "cmd", "host"],
         )
+    ]
 
-    # 2. FR-1 & B-2: Precision SAST + Safe Decoy Suppression
-    reachable_files = mapper.get_reachable_files()
-    scanner = SASTScanner(MOCK_SHOP_DIR, route_mapper=mapper)
-    all_sast = scanner.scan(reachable_files=reachable_files, route_mapper=mapper)
-    active_sast = [f for f in all_sast if not f.is_protected_decoy]
-    decoys = [f for f in all_sast if f.is_protected_decoy]
+    sql_errors = [
+        "sql syntax",
+        "sqlite3.operationalerror",
+        "unrecognized token",
+        "mysql_fetch",
+        "syntax error at or near",
+        "ora-01756",
+        "odbc sql server driver",
+        "unclosed quotation mark",
+    ]
 
-    print(
-        f"\n[2] FR-1 SAST + B-2 SAFE DECOY FILTER "
-        f"({len(active_sast)} active code flaws, {len(decoys)} safe decoys suppressed -> 0% False Alarms):"
-    )
-    print("-" * 88)
-    for d in decoys:
-        print(f"  [SUPPRESSED SAFE DECOY] {d.cwe} at {d.file_path}:{d.line} -> {d.decoy_reason}")
+    for route in probe_targets:
+        clean_path = route.path_pattern
+        # Replace path params like <id>, <int:id>, :uid, {id} with a concrete value '1'
+        import re
+        concrete_path = re.sub(r"<[^>]+>|:([a-zA-Z_][a-zA-Z0-9_]*)|\{[^}]+\}", "1", clean_path)
+        if not concrete_path.startswith("/"):
+            concrete_path = "/" + concrete_path
+        target_url = f"{base_url}{concrete_path}"
 
-    # 3. FR-2 DAST Findings (Runtime exploits + Runtime-only header issue)
-    dast_findings = [
+        # 1. Runtime-only Security Header check (once per endpoint)
+        if target_url not in checked_headers_urls:
+            checked_headers_urls.add(target_url)
+            try:
+                req = urllib.request.Request(target_url, method="GET")
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                    headers_lower = {k.lower(): v for k, v in resp.headers.items()}
+                    if "content-security-policy" not in headers_lower and "x-frame-options" not in headers_lower:
+                        fid = hashlib.sha256(f"DAST:CWE-693:{target_url}".encode()).hexdigest()[:12]
+                        findings.append(
+                            CanonicalFinding(
+                                id=f"dast_{fid}",
+                                source=FindingSource.DAST,
+                                cwe="CWE-693",
+                                severity=Severity.LOW,
+                                url=target_url,
+                                method="GET",
+                                param="Header:Content-Security-Policy",
+                                payload=f"GET {concrete_path}",
+                                evidence="Missing Content-Security-Policy and X-Frame-Options headers in live response",
+                            )
+                        )
+            except Exception:
+                pass
+
+        # Candidate parameters to test on this route
+        params = list(route.parameters) if route.parameters else ["id", "q", "file", "doc", "next", "url", "host", "cmd"]
+        method = (route.method or "GET").upper()
+
+        probes = [
+            ("CWE-89", Severity.CRITICAL, "1' OR '1'='1", lambda body, hdrs, code: any(e in body.lower() for e in sql_errors)),
+            ("CWE-79", Severity.HIGH, "<script>alert('gordon_xss')</script>", lambda body, hdrs, code: "<script>alert('gordon_xss')</script>" in body),
+            ("CWE-78", Severity.CRITICAL, "127.0.0.1; echo gordon_cmd_78", lambda body, hdrs, code: "gordon_cmd_78" in body),
+            ("CWE-22", Severity.HIGH, "../../../../etc/passwd", lambda body, hdrs, code: "root:x:0:0:" in body or "[extensions]" in body.lower()),
+            ("CWE-601", Severity.MEDIUM, "https://evil.example.invalid", lambda body, hdrs, code: "evil.example.invalid" in hdrs.get("location", "")),
+        ]
+
+        for param in params:
+            for cwe, sev, payload, matcher in probes:
+                try:
+                    if method in ("POST", "PUT", "PATCH"):
+                        data_bytes = urllib.parse.urlencode({param: payload}).encode("utf-8")
+                        req = urllib.request.Request(
+                            target_url,
+                            data=data_bytes,
+                            method=method,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        )
+                        probe_url_display = target_url
+                    else:
+                        qs = urllib.parse.urlencode({param: payload})
+                        probe_url_display = f"{target_url}?{qs}"
+                        req = urllib.request.Request(probe_url_display, method="GET")
+
+                    # Do not auto-follow redirects so we can catch CWE-601 302 Location headers
+                    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+                        def redirect_request(self, req, fp, code, msg, headers, newurl):
+                            return None
+
+                    opener = urllib.request.build_opener(_NoRedirect)
+                    try:
+                        resp = opener.open(req, timeout=2.5)
+                        body = resp.read().decode("utf-8", errors="ignore")
+                        hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                        code = resp.getcode()
+                    except urllib.error.HTTPError as he:
+                        body = he.read().decode("utf-8", errors="ignore") if he.fp else ""
+                        hdrs = {k.lower(): v for k, v in he.headers.items()} if he.headers else {}
+                        code = he.code
+
+                    if matcher(body, hdrs, code):
+                        fid = hashlib.sha256(f"DAST:{cwe}:{target_url}:{param}".encode()).hexdigest()[:12]
+                        findings.append(
+                            CanonicalFinding(
+                                id=f"dast_{fid}",
+                                source=FindingSource.DAST,
+                                cwe=cwe,
+                                severity=sev,
+                                url=probe_url_display,
+                                method=method,
+                                param=param,
+                                payload=payload,
+                                evidence=f"Live HTTP {code} response matched {cwe} exploit signature on param '{param}'",
+                            )
+                        )
+                except Exception:
+                    continue
+
+    return findings
+
+
+def _default_mock_dast_findings() -> List[CanonicalFinding]:
+    return [
         CanonicalFinding(
             id="dast_sqli_orders",
             source=FindingSource.DAST,
@@ -130,6 +257,88 @@ def main() -> None:
         ),
     ]
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Gordon Correlate — Checkpoint 1 Live Judge Demo & Custom Code/URL Scanner"
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=MOCK_SHOP_DIR,
+        help="Path to target source code directory (defaults to tests/mock_shop_app)",
+    )
+    parser.add_argument(
+        "--url",
+        type=str,
+        default=None,
+        help="Optional live localhost URL to actively probe with DAST (e.g. http://localhost:5000)",
+    )
+    parser.add_argument(
+        "--sarif",
+        type=str,
+        default=None,
+        help="Optional external SARIF v2.1.0 report file to ingest into SAST findings",
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Optional output path to export full correlated JSON report",
+    )
+    args = parser.parse_args()
+
+    target_dir = os.path.abspath(args.source)
+    if not os.path.exists(target_dir):
+        raise SystemExit(f"[ERROR] Target source directory does not exist: {target_dir}")
+
+    t0 = time.perf_counter()
+    print("=" * 88)
+    print(" GORDON CORRELATE — CHECKPOINT 1 LIVE ENGINE DEMO (PROBLEM 06 · FLAGSHIP)")
+    print(f" Target Codebase : {target_dir}")
+    print(f" Target Live URL : {args.url or 'Simulated DAST (pass --url http://localhost:PORT for live HTTP probing)'}")
+    print("=" * 88)
+
+    # 1. FR-4 & B-7: Polyglot AST Route Map + Call Graph
+    mapper = RouteMapper(target_dir)
+    routes = mapper.scan()
+    print(f"\n[1] FR-4 & B-7 AST ROUTE MAP ({len(routes)} routes extracted across Python & Express):")
+    print("-" * 88)
+    for r in routes:
+        helpers = f" | calls -> {r.called_funcs}" if r.called_funcs else ""
+        print(
+            f"  {r.method:<4} {r.path_pattern:<28} -> {r.func_name}() "
+            f"[{r.file_path}:{r.start_line}-{r.end_line}] "
+            f"(framework={r.framework}, params={r.parameters}){helpers}"
+        )
+
+    # 2. FR-1 & B-2: Precision SAST + Safe Decoy Suppression
+    reachable_files = mapper.get_reachable_files() if routes else None
+    scanner = SASTScanner(target_dir, route_mapper=mapper)
+    all_sast = scanner.scan(reachable_files=reachable_files, route_mapper=mapper)
+    if args.sarif and os.path.exists(args.sarif):
+        all_sast.extend(scanner.ingest_sarif_file(args.sarif))
+
+    active_sast = [f for f in all_sast if not f.is_protected_decoy]
+    decoys = [f for f in all_sast if f.is_protected_decoy]
+
+    print(
+        f"\n[2] FR-1 SAST + B-2 SAFE DECOY FILTER "
+        f"({len(active_sast)} active code flaws, {len(decoys)} safe decoys suppressed -> 0% False Alarms):"
+    )
+    print("-" * 88)
+    for d in decoys:
+        print(f"  [SUPPRESSED SAFE DECOY] {d.cwe} at {d.file_path}:{d.line} -> {d.decoy_reason}")
+
+    # 3. FR-2 DAST Findings (Live HTTP probing if --url is passed, else mock_shop_app DAST)
+    if args.url:
+        print(f"\n[*] Probing live target {args.url} across {len(routes) or 1} routes (Safety Guard verified)...")
+        dast_findings = _live_probe_target(args.url, routes)
+    elif os.path.normcase(target_dir) == os.path.normcase(os.path.abspath(MOCK_SHOP_DIR)):
+        dast_findings = _default_mock_dast_findings()
+    else:
+        dast_findings = []
+
     # 4. FR-5, FR-6, FR-7, FR-8, FR-9, B-3, B-4: Multi-Signal Correlation & Prioritised Ranking
     correlator = Correlator(mapper)
     issues = correlator.correlate(all_sast, dast_findings)
@@ -156,7 +365,7 @@ def main() -> None:
             print(f"      B-4 Fix Advice: {iss.fix_suggestion}")
 
     # 5. Page 4 Bonus: 5-Step Reachability-Aware SCA
-    sca_engine = SCAReachabilityEngine(MOCK_SHOP_DIR, route_mapper=mapper)
+    sca_engine = SCAReachabilityEngine(target_dir, route_mapper=mapper)
     sca_report = sca_engine.analyze_reachability()
     print(
         f"\n[4] PAGE 4 BONUS — 5-STEP REACHABILITY-AWARE SCA "
@@ -181,6 +390,21 @@ def main() -> None:
     print("=" * 88)
     print(f" Complete Scan + AST Route Map + Decoy Filter + Correlation + SCA finished in {elapsed_ms:.1f} ms")
     print("=" * 88)
+
+    if args.out:
+        out_payload = {
+            "target_dir": target_dir,
+            "target_url": args.url,
+            "routes": [r.model_dump() for r in routes],
+            "sast_active_count": len(active_sast),
+            "sast_suppressed_decoys": [d.model_dump() for d in decoys],
+            "dast_count": len(dast_findings),
+            "correlated_issues": [i.model_dump() for i in issues],
+            "sca_report": sca_report.model_dump(),
+        }
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(out_payload, f, indent=2)
+        print(f"[+] Exported full JSON report to: {os.path.abspath(args.out)}")
 
 
 if __name__ == "__main__":
