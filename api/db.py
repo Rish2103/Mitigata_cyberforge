@@ -215,6 +215,8 @@ class DatabaseStore:
     ) -> int:
         """Idempotently upsert discovered FR-4 RouteEntry items."""
         with self._connect() as conn:
+            if routes:
+                conn.execute("DELETE FROM routes WHERE app_name = ?", (app_name,))
             for r in routes:
                 conn.execute(
                     """
@@ -725,6 +727,12 @@ class DatabaseStore:
             sebi_cscrf_sla_days=int(row["sebi_cscrf_sla_days"] or 90),
         )
 
+    @staticmethod
+    def _get_latest_app_name(conn: sqlite3.Connection) -> Optional[str]:
+        """Return the `app_name` of the most recently executed scan, if any."""
+        row = conn.execute("SELECT app_name FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        return str(row["app_name"]) if row and row["app_name"] else None
+
     def get_issues(
         self,
         status: Optional[str] = None,
@@ -736,35 +744,41 @@ class DatabaseStore:
         """
         FR-9 / FR-10: Retrieve correlated issues sorted with `Confirmed` issues first,
         then by `risk_score` descending.
+        When neither `app_name` nor `scan_id` is specified, scope to the latest scanned
+        application workspace so historical test partitions do not produce duplicate rows.
         """
         clauses: List[str] = []
         params: List[Any] = []
 
-        if scan_id is not None:
-            clauses.append(
-                "id IN (SELECT issue_id FROM scan_issue_links WHERE scan_id = ?)"
-            )
-            params.append(scan_id)
-        elif only_open:
-            clauses.append("is_open = 1")
-
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        if cwe:
-            clauses.append("UPPER(cwe) = UPPER(?)")
-            params.append(cwe)
-        if app_name:
-            clauses.append("app_name = ?")
-            params.append(app_name)
-
-        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        query = f"""
-            SELECT * FROM issues
-            {where_sql}
-            ORDER BY {STATUS_SORT_ORDER_SQL} ASC, risk_score DESC, id ASC
-        """
         with self._connect() as conn:
+            effective_app = app_name
+            if scan_id is None and not effective_app:
+                effective_app = self._get_latest_app_name(conn)
+
+            if scan_id is not None:
+                clauses.append(
+                    "id IN (SELECT issue_id FROM scan_issue_links WHERE scan_id = ?)"
+                )
+                params.append(scan_id)
+            elif only_open:
+                clauses.append("is_open = 1")
+
+            if status:
+                clauses.append("status = ?")
+                params.append(status)
+            if cwe:
+                clauses.append("UPPER(cwe) = UPPER(?)")
+                params.append(cwe)
+            if effective_app:
+                clauses.append("app_name = ?")
+                params.append(effective_app)
+
+            where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            query = f"""
+                SELECT * FROM issues
+                {where_sql}
+                ORDER BY {STATUS_SORT_ORDER_SQL} ASC, risk_score DESC, id ASC
+            """
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_issue(r) for r in rows]
 
@@ -777,12 +791,13 @@ class DatabaseStore:
         return self._row_to_issue(row)
 
     def get_routes(self, app_name: Optional[str] = None) -> List[RouteEntry]:
-        """Retrieve discovered FR-4 route entries."""
+        """Retrieve discovered FR-4 route entries for the specified or latest app."""
         with self._connect() as conn:
-            if app_name:
+            effective_app = app_name or self._get_latest_app_name(conn)
+            if effective_app:
                 rows = conn.execute(
                     "SELECT route_json FROM routes WHERE app_name = ? ORDER BY canonical_path, method",
-                    (app_name,),
+                    (effective_app,),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -793,10 +808,19 @@ class DatabaseStore:
     def get_suppressed_decoys(self, app_name: Optional[str] = None) -> List[CanonicalFinding]:
         """B-2: Retrieve findings marked as protected decoys (`is_protected_decoy = 1`)."""
         with self._connect() as conn:
-            if app_name:
+            effective_app = app_name or self._get_latest_app_name(conn)
+            if effective_app:
                 rows = conn.execute(
-                    "SELECT finding_json FROM findings WHERE is_protected_decoy = 1 AND app_name = ?",
-                    (app_name,),
+                    """
+                    SELECT finding_json FROM findings
+                    WHERE is_protected_decoy = 1
+                      AND app_name = ?
+                      AND last_scan_id = (
+                          SELECT MAX(last_scan_id) FROM findings
+                          WHERE is_protected_decoy = 1 AND app_name = ?
+                      )
+                    """,
+                    (effective_app, effective_app),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -807,10 +831,18 @@ class DatabaseStore:
     def get_sca_findings(self, app_name: Optional[str] = None) -> List[SCAFinding]:
         """Retrieve Page 4 Reachability-Aware SCA findings."""
         with self._connect() as conn:
-            if app_name:
+            effective_app = app_name or self._get_latest_app_name(conn)
+            if effective_app:
                 rows = conn.execute(
-                    "SELECT sca_json FROM sca_findings WHERE app_name = ? ORDER BY reachability_status, package_name",
-                    (app_name,),
+                    """
+                    SELECT sca_json FROM sca_findings
+                    WHERE app_name = ?
+                      AND scan_id = (
+                          SELECT MAX(scan_id) FROM sca_findings WHERE app_name = ?
+                      )
+                    ORDER BY reachability_status, package_name
+                    """,
+                    (effective_app, effective_app),
                 ).fetchall()
             else:
                 rows = conn.execute(
