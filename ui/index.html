@@ -1,0 +1,1905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CyberForge Correlate — AST & DAST Correlation Engine</title>
+  <!-- Editorial Serif-Sans Hybrid + Geometric Grotesque + Monospace Fallback Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ==========================================================================
+       1. SARVAM AI ("SOVEREIGN INDIAN EDITORIAL MODERNISM") DESIGN TOKENS
+       ========================================================================== */
+    :root {
+      /* Typography Families */
+      --font-season-mix: "Season Mix", "Instrument Serif", Georgia, serif;
+      --font-matter: "Matter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --font-mono: "Matter Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+      /* Core Semantic Tokens (Text, Surface, Stroke, Brand) */
+      --color-tx: #1f1f1f;
+      --color-tx-secondary: #3d3d3d;
+      --color-tx-tertiary: #666666;
+      --color-tx-inverse: #faf8f5;
+      --color-tx-brand: #29211d;
+      --color-tx-accent: #c4733d;
+
+      --color-sf: #fcfcfc;
+      --color-sf-secondary: #f5f5f5;
+      --color-sf-tertiary: #f0f0f0;
+      --color-sf-quaternary: #e6e6e6;
+
+      --color-st: #e6e6e6;
+      --color-st-secondary: #f0f0f0;
+
+      --color-sr-white: #ffffff;
+      --color-sr-black: #141414;
+      --color-sr-slate: #2a2c33;
+      --color-br-orange: #d5650f;
+      --color-br-blue: #393cc1;
+
+      /* Sarvam Indigo Ramp */
+      --color-sr-indigo-50:  #fafcff;
+      --color-sr-indigo-100: #e8effc;
+      --color-sr-indigo-200: #d2dff9;
+      --color-sr-indigo-300: #a7c0f1;
+      --color-sr-indigo-400: #81a0e9;
+      --color-sr-indigo-500: #6a88e2;
+      --color-sr-indigo-600: #4250d5;
+      --color-sr-indigo-700: #3d43c6;
+      --color-sr-indigo-800: #3333cc;
+      --color-sr-indigo-900: #212191;
+      --color-sr-indigo-950: #11115b;
+
+      /* Sarvam Orange / Terracotta Ramp */
+      --color-sr-orange-50:  #fffbfa;
+      --color-sr-orange-100: #fef2ec;
+      --color-sr-orange-200: #fddcce;
+      --color-sr-orange-300: #f9b899;
+      --color-sr-orange-400: #f39567;
+      --color-sr-orange-500: #f6b394;
+      --color-sr-orange-600: #ec813e;
+      --color-sr-orange-700: #ef772f;
+      --color-sr-orange-800: #e6651b;
+      --color-sr-orange-900: #a5460f;
+      --color-sr-orange-950: #682906;
+
+      /* Sarvam Green (Verification & Safe Decoy Ramp) */
+      --color-sr-green-50:  #f2f8eb;
+      --color-sr-green-100: #dbeed0;
+      --color-sr-green-200: #c8e4b0;
+      --color-sr-green-300: #90c85b;
+      --color-sr-green-400: #72ba32;
+      --color-sr-green-500: #5ea322;
+      --color-sr-green-600: #47821b;
+      --color-sr-green-700: #336312;
+      --color-sr-green-800: #24450b;
+      --color-sr-green-900: #152605;
+
+      /* Sarvam Pink (Lotus Accent Ramp) */
+      --color-sr-pink-50:  #fceaf0;
+      --color-sr-pink-100: #f9d5e1;
+      --color-sr-pink-200: #efabc5;
+      --color-sr-pink-300: #e0568b;
+      --color-sr-pink-400: #d1306e;
+
+      /* Sarvam Red (Alert / Confirmed Critical Ramp) */
+      --color-sr-red-50:  #fde7e2;
+      --color-sr-red-100: #f8d1c6;
+      --color-sr-red-200: #f3a18d;
+      --color-sr-red-300: #e5431c;
+      --color-sr-red-400: #d3310a;
+      --color-sr-red-500: #9f270a;
+      --color-sr-red-600: #6c1e0c;
+      --color-sr-red-700: #3e140b;
+
+      /* Sarvam Yellow / Saffron Amber (Code-Only & Audit Ramp) */
+      --color-sr-yellow-50:  #fff8e6;
+      --color-sr-yellow-100: #fff1ce;
+      --color-sr-yellow-200: #ffe8b7;
+      --color-sr-yellow-300: #ffcb79;
+      --color-sr-yellow-400: #ffb94a;
+      --color-sr-yellow-500: #ffa529;
+      --color-sr-yellow-600: #d9821f;
+      --color-sr-yellow-700: #9c5b1b;
+      --color-sr-yellow-800: #613d18;
+
+      /* Warm Espresso-Tinted Elevation Shadows */
+      --shadow-sm: 0 1px 2px rgba(41, 33, 29, 0.04);
+      --shadow-md: 0 4px 12px rgba(41, 33, 29, 0.06);
+      --shadow-lg: 0 8px 24px rgba(41, 33, 29, 0.08);
+      --shadow-card: 0 1px 3px rgba(41, 33, 29, 0.04), 0 4px 12px rgba(41, 33, 29, 0.03);
+
+      /* Border Radii */
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-2xl: 20px;
+      --radius-3xl: 24px;
+      --radius-pill: 9999px;
+
+      /* Apple Fluid Motion Curves */
+      --ease-spring: cubic-bezier(0.2, 0, 0, 1);
+      --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-morph: cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      background-color: var(--color-sf);
+      color: var(--color-tx);
+      font-family: var(--font-matter);
+      font-size: 16px;
+      line-height: 1.5;
+      letter-spacing: -0.008em;
+      font-optical-sizing: auto;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ==========================================================================
+       2. TYPOGRAPHY & OPTICAL TRACKING UTILITIES (SARVAM + APPLE WWDC RULES)
+       ========================================================================== */
+    .font-season {
+      font-family: var(--font-season-mix);
+      font-weight: 400;
+    }
+    .font-matter {
+      font-family: var(--font-matter);
+    }
+    .font-mono {
+      font-family: var(--font-mono);
+    }
+
+    .eyebrow {
+      font-family: var(--font-matter);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--color-tx-tertiary);
+    }
+
+    .display-title {
+      font-family: var(--font-season-mix);
+      font-size: clamp(2.1rem, 3.6vw, 3.1rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+      color: var(--color-tx);
+    }
+
+    /* ==========================================================================
+       3. TRANSLUCENT FLOATING NAVBAR & AMBIENT AURA
+       ========================================================================== */
+    .hero-aura {
+      position: fixed;
+      top: -140px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 860px;
+      height: 420px;
+      background: radial-gradient(circle, #a5bbfc 0%, #d5e2ff 42%, transparent 72%);
+      filter: blur(90px);
+      opacity: 0.45;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 68px;
+      background: rgba(252, 252, 252, 0.78);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid rgba(230, 230, 230, 0.85);
+      transition: background 200ms var(--ease-spring);
+    }
+
+    .container {
+      width: 92%;
+      max-width: 1400px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .nav-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand-cluster {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-emblem {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #3a3f5c 0%, #1e2033 100%);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-family: var(--font-season-mix);
+      font-size: 20px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 6px rgba(30,32,51,0.18);
+    }
+
+    .brand-name {
+      font-family: var(--font-matter);
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+      color: var(--color-tx);
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--color-tx-tertiary);
+      display: block;
+    }
+
+    .scope-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 13px;
+      border-radius: var(--radius-pill);
+      background: var(--color-sr-green-50);
+      border: 1px solid var(--color-sr-green-200);
+      color: var(--color-sr-green-800);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .scope-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-sr-green-500);
+      box-shadow: 0 0 0 3px rgba(94, 163, 34, 0.2);
+    }
+
+    /* ==========================================================================
+       4. TACTILE BEVELED PILL BUTTONS WITH CURSOR SPOTLIGHT & POINTER-DOWN RESPONSE
+       ========================================================================== */
+    .btn-pill {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      overflow: hidden;
+      border-radius: var(--radius-pill);
+      font-family: var(--font-matter);
+      font-weight: 500;
+      font-size: 14px;
+      min-height: 40px;
+      padding: 8px 18px;
+      cursor: pointer;
+      user-select: none;
+      border: none;
+      outline: none;
+      transition: transform 120ms ease-out, box-shadow 300ms var(--ease-spring), background 300ms var(--ease-spring);
+      will-change: transform;
+    }
+
+    /* Apple Rule 1: Instant response on pointer-down, not release */
+    .btn-pill:active,
+    .btn-pill.is-pressed {
+      transform: scale(0.96);
+      transition: transform 80ms ease-out;
+    }
+
+    .btn-primary {
+      background: linear-gradient(180deg, #3a3f5c 0%, #1e2033 100%);
+      color: #ffffff;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.25), 0 2px 8px rgba(30, 32, 51, 0.16);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(180deg, #434968 0%, #262840 100%);
+    }
+
+    .btn-secondary {
+      background: linear-gradient(180deg, #ffffff 0%, #f0f1f5 100%);
+      color: var(--color-tx);
+      border: 1px solid var(--color-st);
+      box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.05), var(--shadow-sm);
+    }
+
+    .btn-secondary:hover {
+      background: #ffffff;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+    }
+
+    .btn-spotlight {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      border-radius: var(--radius-pill);
+      opacity: 0;
+      transition: opacity 250ms var(--ease-spring);
+      background: radial-gradient(circle 75px at var(--gx, 50%) var(--gy, 50%), rgba(255, 255, 255, 0.22) 0%, transparent 100%);
+    }
+
+    .btn-pill:hover .btn-spotlight {
+      opacity: 1;
+    }
+
+    /* ==========================================================================
+       5. HERO HEADER & SCAN CONFIGURATION BAR
+       ========================================================================== */
+    .hero-section {
+      padding: 28px 0 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .hero-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .sovereign-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--color-sr-indigo-900);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.025em;
+    }
+
+    .sovereign-line {
+      width: 36px;
+      height: 1px;
+      background: radial-gradient(circle, rgb(106, 136, 226) 0%, rgba(0, 0, 0, 0) 100%);
+    }
+
+    /* Glassmorphic Outer Bezel (Sarvam Playground Pattern) */
+    .glass-bezel {
+      padding: 6px;
+      border-radius: var(--radius-3xl);
+      background: linear-gradient(rgba(20, 20, 20, 0.08) 0%, rgba(20, 20, 20, 0.03) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(24px);
+    }
+
+    .scan-control-bar {
+      background: var(--color-sr-white);
+      border: 1px solid var(--color-st);
+      border-radius: var(--radius-2xl);
+      padding: 14px 18px;
+      display: grid;
+      grid-template-columns: 1.1fr 1.1fr 0.8fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    @media (max-width: 980px) {
+      .scan-control-bar {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      .scan-control-bar {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .input-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--color-tx-tertiary);
+    }
+
+    .input-field {
+      height: 38px;
+      padding: 0 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-st);
+      background: var(--color-sf);
+      color: var(--color-tx);
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      transition: border-color 150ms, box-shadow 150ms;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: var(--color-sr-indigo-500);
+      box-shadow: 0 0 0 3px var(--color-sr-indigo-100);
+      background: var(--color-sr-white);
+    }
+
+    /* ==========================================================================
+       6. 4 KPI BENTO MOSAIC WITH SARVAM MESH GLOWS (.cw-glow)
+       ========================================================================== */
+    .bento-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px; /* Sarvam signature 8px micro-grid gap */
+      margin: 18px 0;
+    }
+
+    @media (max-width: 960px) {
+      .bento-kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    @media (max-width: 540px) {
+      .bento-kpi-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .kpi-card {
+      position: relative;
+      overflow: hidden;
+      background: var(--color-sr-white);
+      border: 1px solid var(--color-st);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      box-shadow: var(--shadow-card);
+      cursor: pointer;
+      transition: transform 250ms var(--ease-spring), border-color 250ms var(--ease-spring), box-shadow 250ms var(--ease-spring);
+      user-select: none;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .kpi-card:active {
+      transform: scale(0.98);
+      transition: transform 90ms ease-out;
+    }
+
+    .kpi-card.active-filter {
+      border-color: var(--color-tx);
+      box-shadow: 0 0 0 1px var(--color-tx), var(--shadow-md);
+    }
+
+    .cw-glow {
+      position: absolute;
+      inset: 0;
+      opacity: 0.55;
+      pointer-events: none;
+      transition: opacity 400ms var(--ease-morph);
+    }
+
+    .kpi-card:hover .cw-glow,
+    .kpi-card.active-filter .cw-glow {
+      opacity: 0.92;
+    }
+
+    /* Mesh Glow 1: Confirmed (Orange + Lotus Pink / Coral) */
+    .glow-confirmed {
+      background:
+        radial-gradient(70% 90% at 100% 100%, rgba(230, 101, 27, 0.25) 0%, rgba(239, 171, 197, 0.22) 45%, transparent 78%),
+        linear-gradient(to top, var(--color-sr-orange-50) 0%, transparent 75%);
+    }
+
+    /* Mesh Glow 2: Code Only (Saffron / Amber) */
+    .glow-code {
+      background:
+        radial-gradient(70% 90% at 100% 100%, rgba(255, 185, 74, 0.28) 0%, rgba(255, 232, 183, 0.25) 45%, transparent 78%),
+        linear-gradient(to top, var(--color-sr-yellow-50) 0%, transparent 75%);
+    }
+
+    /* Mesh Glow 3: Runtime Only (Sovereign Indigo) */
+    .glow-runtime {
+      background:
+        radial-gradient(70% 90% at 100% 100%, rgba(129, 160, 233, 0.30) 0%, rgba(210, 223, 249, 0.25) 45%, transparent 78%),
+        linear-gradient(to top, var(--color-sr-indigo-50) 0%, transparent 75%);
+    }
+
+    /* Mesh Glow 4: Safe Decoys Suppressed (Sage Green) */
+    .glow-decoy {
+      background:
+        radial-gradient(70% 90% at 100% 100%, rgba(144, 200, 91, 0.28) 0%, rgba(200, 228, 176, 0.24) 45%, transparent 78%),
+        linear-gradient(to top, var(--color-sr-green-50) 0%, transparent 75%);
+    }
+
+    .kpi-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .kpi-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .kpi-value {
+      font-family: var(--font-season-mix);
+      font-size: 40px;
+      line-height: 1.05;
+      letter-spacing: -0.8px;
+      color: var(--color-tx);
+    }
+
+    .kpi-caption {
+      font-size: 13px;
+      color: var(--color-tx-secondary);
+      font-weight: 500;
+    }
+
+    .kpi-sub {
+      font-size: 11.5px;
+      color: var(--color-tx-tertiary);
+    }
+
+    /* ==========================================================================
+       7. APPSEC TELEMETRY & IDEMPOTENCY PROOF STRIP
+       ========================================================================== */
+    .telemetry-strip {
+      background: linear-gradient(180deg, #13121e 0%, #232542 100%);
+      color: var(--color-tx-inverse);
+      border-radius: var(--radius-xl);
+      padding: 14px 22px;
+      margin-bottom: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .telemetry-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .telemetry-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .telemetry-label {
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--color-sr-indigo-300);
+    }
+
+    .telemetry-val {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    /* ==========================================================================
+       8. WORKSPACE TABS & FILTER CONTROLS
+       ========================================================================== */
+    .workspace-shell {
+      background: var(--color-sr-white);
+      border: 1px solid var(--color-st);
+      border-radius: var(--radius-2xl);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      margin-bottom: 56px;
+    }
+
+    .workspace-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 18px;
+      background: var(--color-sf-secondary);
+      border-bottom: 1px solid var(--color-st);
+    }
+
+    .tab-group {
+      display: inline-flex;
+      background: var(--color-sf-tertiary);
+      padding: 4px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--color-st);
+      gap: 4px;
+    }
+
+    .tab-btn {
+      border: none;
+      background: transparent;
+      color: var(--color-tx-tertiary);
+      font-family: var(--font-matter);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 15px;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background 200ms var(--ease-spring), color 200ms var(--ease-spring), transform 100ms ease-out;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .tab-btn:active {
+      transform: scale(0.96);
+    }
+
+    .tab-btn.active {
+      background: var(--color-sr-white);
+      color: var(--color-tx);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tab-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: var(--radius-pill);
+      background: var(--color-sf-secondary);
+      color: var(--color-tx-secondary);
+    }
+
+    .filter-cluster {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .select-pill {
+      height: 34px;
+      padding: 0 12px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--color-st);
+      background: var(--color-sr-white);
+      color: var(--color-tx-secondary);
+      font-family: var(--font-matter);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    /* ==========================================================================
+       9. PRIORITISED ISSUE CARDS & BADGES (FR-8, FR-9, B-3, B-4)
+       ========================================================================== */
+    .issue-list {
+      display: flex;
+      flex-direction: column;
+      divide-y: 1px solid var(--color-st-secondary);
+    }
+
+    .issue-row {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--color-st-secondary);
+      background: var(--color-sr-white);
+      transition: background 180ms var(--ease-spring);
+      cursor: pointer;
+    }
+
+    .issue-row:hover {
+      background: var(--color-sf);
+    }
+
+    .issue-row-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .issue-main-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .badge-confirmed {
+      background: var(--color-sr-red-50);
+      color: var(--color-sr-red-500);
+      border: 1px solid var(--color-sr-red-200);
+    }
+
+    .badge-code-only {
+      background: var(--color-sr-yellow-50);
+      color: var(--color-sr-yellow-800);
+      border: 1px solid var(--color-sr-yellow-300);
+    }
+
+    .badge-runtime-only {
+      background: var(--color-sr-indigo-100);
+      color: var(--color-sr-indigo-900);
+      border: 1px solid var(--color-sr-indigo-300);
+    }
+
+    .badge-decoy {
+      background: var(--color-sr-green-50);
+      color: var(--color-sr-green-800);
+      border: 1px solid var(--color-sr-green-200);
+    }
+
+    .badge-cwe {
+      font-family: var(--font-mono);
+      background: var(--color-sr-slate);
+      color: #ffffff;
+      padding: 3px 9px;
+      border-radius: var(--radius-sm);
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    .badge-sev-Critical, .badge-sev-CRITICAL, .badge-sev-High, .badge-sev-HIGH {
+      background: var(--color-sr-orange-100);
+      color: var(--color-sr-orange-900);
+      border: 1px solid var(--color-sr-orange-300);
+    }
+
+    .badge-sev-Medium, .badge-sev-MEDIUM, .badge-sev-Low, .badge-sev-LOW, .badge-sev-Info, .badge-sev-INFO {
+      background: var(--color-sf-tertiary);
+      color: var(--color-tx-secondary);
+      border: 1px solid var(--color-st);
+    }
+
+    .badge-diff-NEW {
+      background: var(--color-sr-red-100);
+      color: var(--color-sr-red-600);
+      border: 1px solid var(--color-sr-red-300);
+    }
+    .badge-diff-FIXED {
+      background: var(--color-sr-green-100);
+      color: var(--color-sr-green-800);
+      border: 1px solid var(--color-sr-green-300);
+    }
+    .badge-diff-STILL-OPEN {
+      background: var(--color-sr-yellow-100);
+      color: var(--color-sr-yellow-800);
+      border: 1px solid var(--color-sr-yellow-300);
+    }
+
+    .issue-title {
+      font-family: var(--font-season-mix);
+      font-size: 20px;
+      color: var(--color-tx);
+      letter-spacing: -0.015em;
+    }
+
+    .issue-summary-pills {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+      margin-top: 10px;
+      font-size: 12.5px;
+      color: var(--color-tx-secondary);
+    }
+
+    .mono-chip {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--color-sf-secondary);
+      border: 1px solid var(--color-st);
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      color: var(--color-tx);
+    }
+
+    .b3-link-banner {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-md);
+      background: var(--color-sr-indigo-50);
+      border: 1px solid var(--color-sr-indigo-200);
+      color: var(--color-sr-indigo-950);
+      font-size: 12.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ==========================================================================
+       10. AST ROUTE MAP TABLE (FR-4) & SAFE DECOYS TABLE (B-2)
+       ========================================================================== */
+    .data-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13.5px;
+    }
+
+    .data-table th {
+      background: var(--color-sf-secondary);
+      color: var(--color-tx-tertiary);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--color-st);
+    }
+
+    .data-table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--color-st-secondary);
+      color: var(--color-tx-secondary);
+      vertical-align: top;
+    }
+
+    .data-table tr:hover td {
+      background: var(--color-sf);
+    }
+
+    /* ==========================================================================
+       11. APPLE FLUID DRAGGABLE / INTERRUPTIBLE SPLIT ISSUE INSPECTOR SHEET (FR-8)
+       ========================================================================== */
+    .sheet-scrim {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 20, 20, 0.32);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 260ms var(--ease-spring);
+    }
+
+    .sheet-scrim.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .inspector-sheet {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(920px, 94vw);
+      background: rgba(252, 252, 252, 0.94);
+      backdrop-filter: blur(28px) saturate(190%);
+      -webkit-backdrop-filter: blur(28px) saturate(190%);
+      border-left: 1px solid var(--color-st);
+      box-shadow: -12px 0 40px rgba(41, 33, 29, 0.14);
+      z-index: 210;
+      transform: translate3d(100%, 0, 0);
+      display: flex;
+      flex-direction: column;
+      will-change: transform;
+      touch-action: pan-y;
+    }
+
+    .sheet-grab-bar {
+      position: absolute;
+      left: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 5px;
+      height: 56px;
+      border-radius: 999px;
+      background: var(--color-st);
+      cursor: ew-resize;
+    }
+
+    .sheet-header {
+      padding: 20px 28px;
+      background: rgba(255, 255, 255, 0.82);
+      border-bottom: 1px solid var(--color-st);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .sheet-body {
+      padding: 24px 28px 40px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* FR-8 8-Field Mandatory Grid */
+    .fr8-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    @media (max-width: 760px) {
+      .fr8-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .fr8-cell {
+      background: var(--color-sr-white);
+      border: 1px solid var(--color-st);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+    }
+
+    .fr8-cell-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--color-tx-tertiary);
+      margin-bottom: 4px;
+    }
+
+    .fr8-cell-val {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: var(--color-tx);
+      word-break: break-all;
+    }
+
+    .evidence-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 820px) {
+      .evidence-split {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .evidence-card {
+      background: var(--color-sr-white);
+      border: 1px solid var(--color-st);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .evidence-card-head {
+      padding: 10px 14px;
+      background: var(--color-sf-secondary);
+      border-bottom: 1px solid var(--color-st);
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .code-box {
+      background: var(--color-sr-black);
+      color: #f5f5f5;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.65;
+      padding: 14px 16px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .fix-card {
+      background: var(--color-sr-green-50);
+      border: 1px solid var(--color-sr-green-200);
+      border-radius: var(--radius-lg);
+      padding: 16px 18px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 300;
+      background: var(--color-sr-slate);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: var(--radius-pill);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 250ms var(--ease-spring), opacity 250ms var(--ease-spring);
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* Apple Rule 14: Reduced Motion & Reduced Transparency */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 120ms !important;
+        transform: none !important;
+      }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .navbar, .inspector-sheet, .glass-bezel {
+        backdrop-filter: none !important;
+        background: #ffffff !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sarvam Soft Indigo Ambient Hero Aura -->
+  <div class="hero-aura" aria-hidden="true"></div>
+
+  <!-- Translucent Floating Navbar -->
+  <header class="navbar">
+    <div class="container nav-inner">
+      <div class="brand-cluster">
+        <div class="brand-emblem">C</div>
+        <div>
+          <span class="brand-name">CYBERFORGE CORRELATE</span>
+          <span class="brand-sub">Deterministic AST Route-to-Sink × DAST Engine</span>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div class="scope-pill" title="PRD Page 4 Rule 1: Strict localhost & local Docker target allowlist + follow_redirects=False">
+          <span class="scope-dot"></span>
+          <span>Scope Lock: <strong class="font-mono">localhost / 127.0.0.1</strong> · <code class="font-mono">follow_redirects=False</code></span>
+        </div>
+
+        <button class="btn-pill btn-secondary" id="btnRunIdempotency" onclick="runIdempotencyCheck()">
+          <span class="btn-spotlight"></span>
+          <span>Verify Idempotency (2×)</span>
+        </button>
+
+        <button class="btn-pill btn-primary" id="btnRunScan" onclick="triggerScan(false)">
+          <span class="btn-spotlight"></span>
+          <span id="btnRunScanLabel">Run Scan</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Hero Header + Glassmorphic Scan Control Bar -->
+    <section class="hero-section">
+      <div class="hero-top">
+        <div>
+          <div class="sovereign-badge">
+            <span class="sovereign-line"></span>
+            <span>AST Route-to-Sink × Differential DAST Correlation</span>
+            <span class="sovereign-line"></span>
+          </div>
+          <h1 class="display-title">One Real Bug. One Confirmed Issue.</h1>
+        </div>
+        <div style="text-align:right;">
+          <p class="eyebrow">Active Application Scope</p>
+          <p style="font-size:14px; color:var(--color-tx-secondary); font-weight:500;" id="activeScanBadge">
+            Ready · Click "Run Scan"
+          </p>
+        </div>
+      </div>
+
+      <div class="glass-bezel">
+        <div class="scan-control-bar">
+          <div class="input-group">
+            <label class="input-label" for="inputSourceDir">Target Source Code Path</label>
+            <input class="input-field" id="inputSourceDir" type="text" value="./vuln_app" placeholder="./vuln_app or ./target-app" />
+          </div>
+          <div class="input-group">
+            <label class="input-label" for="inputTargetUrl">Live Runtime Target URL</label>
+            <input class="input-field" id="inputTargetUrl" type="text" value="http://localhost:5000" placeholder="http://localhost:5000" />
+          </div>
+          <div class="input-group">
+            <label class="input-label" for="inputAppName">Application Identifier</label>
+            <input class="input-field" id="inputAppName" type="text" value="cyberforge-web-shop" />
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-pill btn-primary" onclick="triggerScan(false)" style="min-height:38px;">
+              <span class="btn-spotlight"></span>
+              <span>Execute Scan</span>
+            </button>
+            <button class="btn-pill btn-secondary" onclick="compareLatestScans()" style="min-height:38px;" title="Compare latest scans">
+              <span class="btn-spotlight"></span>
+              <span>Compare Diff</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 Summary KPI Bento Cards (FR-7 Buckets + B-2 Safe Decoys) -->
+    <section class="bento-kpi-grid" aria-label="Correlation Summary Counters">
+      <article class="kpi-card" id="kpiConfirmed" onclick="setStatusFilter('Confirmed')">
+        <div class="cw-glow glow-confirmed"></div>
+        <div class="kpi-content">
+          <div class="kpi-header">
+            <span class="eyebrow" style="color:var(--color-sr-red-500);">Confirmed (SAST × DAST)</span>
+            <span class="badge badge-confirmed">P1 Confirmed</span>
+          </div>
+          <div class="kpi-value" id="countConfirmed">0</div>
+          <div class="kpi-caption">Exploitable at Runtime & Pinned to Code Line</div>
+          <div class="kpi-sub">Deterministic CWE + Route + Parameter + Sink Match</div>
+        </div>
+      </article>
+
+      <article class="kpi-card" id="kpiCodeOnly" onclick="setStatusFilter('Code only')">
+        <div class="cw-glow glow-code"></div>
+        <div class="kpi-content">
+          <div class="kpi-header">
+            <span class="eyebrow" style="color:var(--color-sr-yellow-800);">Code Only (SAST)</span>
+            <span class="badge badge-code-only">Static Sink</span>
+          </div>
+          <div class="kpi-value" id="countCodeOnly">0</div>
+          <div class="kpi-caption">Source Sink Without Runtime Proof</div>
+          <div class="kpi-sub">Hard-coded secrets (CWE-798) or unreached paths</div>
+        </div>
+      </article>
+
+      <article class="kpi-card" id="kpiRuntimeOnly" onclick="setStatusFilter('Runtime only')">
+        <div class="cw-glow glow-runtime"></div>
+        <div class="kpi-content">
+          <div class="kpi-header">
+            <span class="eyebrow" style="color:var(--color-sr-indigo-900);">Runtime Only (DAST)</span>
+            <span class="badge badge-runtime-only">Runtime Audit</span>
+          </div>
+          <div class="kpi-value" id="countRuntimeOnly">0</div>
+          <div class="kpi-caption">Live HTTP Exposure Invisible to SAST</div>
+          <div class="kpi-sub">Missing CSP, X-Frame-Options, HttpOnly, CORS</div>
+        </div>
+      </article>
+
+      <article class="kpi-card" id="kpiDecoys" onclick="switchTab('decoys')">
+        <div class="cw-glow glow-decoy"></div>
+        <div class="kpi-content">
+          <div class="kpi-header">
+            <span class="eyebrow" style="color:var(--color-sr-green-800);">Safe Decoys Suppressed</span>
+            <span class="badge badge-decoy">Verified Safe</span>
+          </div>
+          <div class="kpi-value" id="countDecoys">0</div>
+          <div class="kpi-caption">0% False Alarms on Protected Sinks</div>
+          <div class="kpi-sub">Parameterized SQL, escaped HTML & path guards</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- AppSec Risk & Idempotency Telemetry Strip -->
+    <section class="telemetry-strip">
+      <div class="telemetry-metrics">
+        <div class="telemetry-item">
+          <span class="telemetry-label">Total Correlated Issues</span>
+          <span class="telemetry-val" id="telTotalIssues">0</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">AST Routes Mapped</span>
+          <span class="telemetry-val" id="telRoutesCount">0</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Wrong Links Rate</span>
+          <span class="telemetry-val" style="color:var(--color-sr-green-300);">0.0% (&lt; 5% Target)</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Estimated Risk Exposure</span>
+          <span class="telemetry-val" style="color:var(--color-sr-orange-300);" id="telFairRisk">₹0.0 L</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Last Scan Duration</span>
+          <span class="telemetry-val" id="telDuration">—</span>
+        </div>
+      </div>
+      <div style="font-size:12px; color:var(--color-sr-indigo-200); font-family:var(--font-mono);" id="idempotencyStatus">
+        Deterministic Fingerprint Store · Active
+      </div>
+    </section>
+
+    <!-- Main Tabbed Workspace (FR-8, FR-9, FR-4, B-2, B-5) -->
+    <section class="workspace-shell">
+      <div class="workspace-toolbar">
+        <div class="tab-group" role="tablist">
+          <button class="tab-btn active" id="tabBtn-issues" onclick="switchTab('issues')">
+            <span>Prioritised Issues</span>
+            <span class="tab-count" id="tabCountIssues">0</span>
+          </button>
+          <button class="tab-btn" id="tabBtn-routes" onclick="switchTab('routes')">
+            <span>AST Route Map</span>
+            <span class="tab-count" id="tabCountRoutes">0</span>
+          </button>
+          <button class="tab-btn" id="tabBtn-decoys" onclick="switchTab('decoys')">
+            <span>Suppressed Safe Decoys</span>
+            <span class="tab-count" id="tabCountDecoys">0</span>
+          </button>
+          <button class="tab-btn" id="tabBtn-diff" onclick="switchTab('diff')">
+            <span>Scan Diff</span>
+            <span class="tab-count" id="tabCountDiff">0</span>
+          </button>
+        </div>
+
+        <div class="filter-cluster" id="issueFiltersBar">
+          <select class="select-pill" id="filterStatus" onchange="renderIssuesList()">
+            <option value="">All Categories</option>
+            <option value="Confirmed">Confirmed Only</option>
+            <option value="Code only">Code only</option>
+            <option value="Runtime only">Runtime only</option>
+          </select>
+
+          <select class="select-pill" id="filterCwe" onchange="renderIssuesList()">
+            <option value="">All CWEs</option>
+            <option value="CWE-89">CWE-89 (SQL Injection)</option>
+            <option value="CWE-79">CWE-79 (Reflected XSS)</option>
+            <option value="CWE-78">CWE-78 (Command Injection)</option>
+            <option value="CWE-22">CWE-22 (Path Traversal)</option>
+            <option value="CWE-601">CWE-601 (Open Redirect)</option>
+            <option value="CWE-798">CWE-798 (Hard-coded Secret)</option>
+            <option value="CWE-693">CWE-693 (Missing CSP / Headers)</option>
+            <option value="CWE-614">CWE-614 (Insecure Cookie)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- TAB 1: Prioritised Correlated Issues (FR-9 & FR-8) -->
+      <div id="panel-issues" class="issue-list"></div>
+
+      <!-- TAB 2: AST Route-to-Sink Map (FR-4) -->
+      <div id="panel-routes" class="data-table-wrap" style="display:none;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>HTTP Method</th>
+              <th>Canonical Route Pattern</th>
+              <th>Handler Function</th>
+              <th>Source File & Line Span</th>
+              <th>Extracted Params</th>
+              <th>1-Hop Helper Calls</th>
+            </tr>
+          </thead>
+          <tbody id="routesTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- TAB 3: Suppressed Safe Decoys (Bonus B-2) -->
+      <div id="panel-decoys" class="data-table-wrap" style="display:none;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>CWE</th>
+              <th>Source File & Line</th>
+              <th>Protected Code Construct</th>
+              <th>Why Suppressed (B-2 Guard Analysis)</th>
+            </tr>
+          </thead>
+          <tbody id="decoysTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- TAB 4: Scan Comparison Diff (Bonus B-5) -->
+      <div id="panel-diff" style="display:none; padding:20px 22px;">
+        <div id="diffContentArea"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Apple Fluid Interruptible Split Issue Inspector Sheet (FR-8 Detail View) -->
+  <div class="sheet-scrim" id="sheetScrim" onclick="closeInspector()"></div>
+  <aside class="inspector-sheet" id="inspectorSheet" aria-label="FR-8 Issue Detail Inspector">
+    <div class="sheet-grab-bar" id="sheetGrabBar" title="Drag to dismiss (Apple 1:1 Pointer Tracking)"></div>
+    <div class="sheet-header">
+      <div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;" id="sheetBadges"></div>
+        <h2 class="font-season" style="font-size:26px; line-height:1.15;" id="sheetTitle">Issue Detail</h2>
+      </div>
+      <button class="btn-pill btn-secondary" onclick="closeInspector()" style="min-height:34px; padding:6px 14px;">
+        <span>Close (Esc)</span>
+      </button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </aside>
+
+  <div class="toast" id="toastEl"></div>
+
+  <script>
+    /* ==========================================================================
+       1. SARVAM CURSOR-TRACKING RADIAL SPOTLIGHT + APPLE POINTER-DOWN FEEDBACK
+       ========================================================================== */
+    document.addEventListener('pointermove', (e) => {
+      const btn = e.target.closest('.btn-pill');
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      btn.style.setProperty('--gx', `${e.clientX - rect.left}px`);
+      btn.style.setProperty('--gy', `${e.clientY - rect.top}px`);
+    });
+
+    document.addEventListener('pointerdown', (e) => {
+      const pressable = e.target.closest('.btn-pill, .kpi-card');
+      if (pressable) pressable.classList.add('is-pressed');
+    });
+    document.addEventListener('pointerup', () => {
+      document.querySelectorAll('.is-pressed').forEach(el => el.classList.remove('is-pressed'));
+    });
+
+    /* ==========================================================================
+       2. APPLE WWDC FLUID SPRING & GESTURE ENGINE (INTERRUPTIBLE + VELOCITY HANDOFF)
+       ========================================================================== */
+    const sheetEl = document.getElementById('inspectorSheet');
+    const scrimEl = document.getElementById('sheetScrim');
+
+    let sheetSpring = {
+      x: window.innerWidth, // px offset from open position (0 = fully open)
+      v: 0,                 // px/s velocity
+      target: window.innerWidth,
+      rafId: null,
+      dragging: false
+    };
+
+    // Apple WWDC rubber-banding formula: (overshoot * dim * c) / (dim + c * |overshoot|)
+    function rubberband(overshoot, dim, constant = 0.55) {
+      return (overshoot * dim * constant) / (dim + constant * Math.abs(overshoot));
+    }
+
+    // Apple WWDC momentum projection formula: (v / 1000) * d / (1 - d)
+    function projectMomentum(velocityPxPerSec, decel = 0.996) {
+      return (velocityPxPerSec / 1000) * decel / (1 - decel);
+    }
+
+    function animateSheetSpring(targetX, initialVelocity = null, dampingRatio = 1.0, response = 0.34) {
+      sheetSpring.target = targetX;
+      if (initialVelocity !== null) {
+        sheetSpring.v = initialVelocity;
+      }
+      if (sheetSpring.rafId) cancelAnimationFrame(sheetSpring.rafId);
+
+      const omega = (2 * Math.PI) / response;
+      let lastTime = performance.now();
+
+      function tick(now) {
+        if (sheetSpring.dragging) return;
+        const dt = Math.min((now - lastTime) / 1000, 0.032);
+        lastTime = now;
+
+        const displacement = sheetSpring.x - sheetSpring.target;
+        const springForce = -omega * omega * displacement;
+        const dampingForce = -2 * dampingRatio * omega * sheetSpring.v;
+        const accel = springForce + dampingForce;
+
+        sheetSpring.v += accel * dt;
+        sheetSpring.x += sheetSpring.v * dt;
+
+        sheetEl.style.transform = `translate3d(${Math.max(-24, sheetSpring.x)}px, 0, 0)`;
+
+        if (Math.abs(displacement) < 0.5 && Math.abs(sheetSpring.v) < 4) {
+          sheetSpring.x = sheetSpring.target;
+          sheetSpring.v = 0;
+          sheetEl.style.transform = `translate3d(${sheetSpring.target}px, 0, 0)`;
+          sheetSpring.rafId = null;
+          return;
+        }
+        sheetSpring.rafId = requestAnimationFrame(tick);
+      }
+      sheetSpring.rafId = requestAnimationFrame(tick);
+    }
+
+    // 1:1 Pointer Drag with setPointerCapture on Sheet Grab Bar
+    const grabBar = document.getElementById('sheetGrabBar');
+    let dragStartX = 0;
+    let sheetStartOffset = 0;
+    let pointerHistory = [];
+
+    grabBar.addEventListener('pointerdown', (e) => {
+      grabBar.setPointerCapture(e.pointerId);
+      sheetSpring.dragging = true;
+      if (sheetSpring.rafId) cancelAnimationFrame(sheetSpring.rafId);
+      dragStartX = e.clientX;
+      sheetStartOffset = sheetSpring.x;
+      pointerHistory = [{ x: e.clientX, t: performance.now() }];
+    });
+
+    grabBar.addEventListener('pointermove', (e) => {
+      if (!sheetSpring.dragging) return;
+      const delta = e.clientX - dragStartX;
+      const rawOffset = sheetStartOffset + delta;
+      const width = sheetEl.offsetWidth || 860;
+      // Rubber-band if user drags left past 0
+      sheetSpring.x = rawOffset < 0 ? -rubberband(-rawOffset, width) : rawOffset;
+      sheetEl.style.transform = `translate3d(${sheetSpring.x}px, 0, 0)`;
+
+      const now = performance.now();
+      pointerHistory.push({ x: e.clientX, t: now });
+      if (pointerHistory.length > 5) pointerHistory.shift();
+    });
+
+    grabBar.addEventListener('pointerup', () => {
+      if (!sheetSpring.dragging) return;
+      sheetSpring.dragging = false;
+      let releaseVelocity = 0;
+      if (pointerHistory.length >= 2) {
+        const first = pointerHistory[0];
+        const last = pointerHistory[pointerHistory.length - 1];
+        const dt = Math.max((last.t - first.t) / 1000, 0.008);
+        releaseVelocity = (last.x - first.x) / dt;
+      }
+      const width = sheetEl.offsetWidth || 860;
+      const projected = sheetSpring.x + projectMomentum(releaseVelocity);
+      if (projected > width * 0.28 || releaseVelocity > 450) {
+        scrimEl.classList.remove('open');
+        animateSheetSpring(width + 40, releaseVelocity, 0.86, 0.32);
+      } else {
+        animateSheetSpring(0, releaseVelocity, 0.84, 0.32);
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeInspector();
+    });
+
+    /* ==========================================================================
+       3. STATE & FASTAPI INTEGRATION (FR-4, FR-6, FR-7, FR-8, FR-9, FR-10, B-5)
+       ========================================================================== */
+    let state = {
+      issues: [],
+      routes: [],
+      decoys: [],
+      scans: [],
+      diff: null,
+      activeTab: 'issues',
+      selectedIssueId: null
+    };
+
+    function showToast(msg) {
+      const t = document.getElementById('toastEl');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3200);
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function loadDashboardData() {
+      const appName = document.getElementById('inputAppName').value.trim();
+      const q = appName ? `?app_name=${encodeURIComponent(appName)}` : '';
+      const [issuesRes, routesRes, decoysRes, scansRes] = await Promise.all([
+        fetch(`/issues${q}`),
+        fetch(`/routes${q}`),
+        fetch(`/decoys${q}`),
+        fetch('/scans')
+      ]);
+
+      state.issues = await issuesRes.json();
+      state.routes = await routesRes.json();
+      state.decoys = await decoysRes.json();
+      state.scans = await scansRes.json();
+
+      updateKpisAndTelemetry();
+      renderIssuesList();
+      renderRoutesTable();
+      renderDecoysTable();
+    }
+
+    function updateKpisAndTelemetry() {
+      const confirmed = state.issues.filter(i => i.status === 'Confirmed').length;
+      const codeOnly = state.issues.filter(i => i.status === 'Code only').length;
+      const runtimeOnly = state.issues.filter(i => i.status === 'Runtime only').length;
+      const decoys = state.decoys.length;
+
+      document.getElementById('countConfirmed').textContent = confirmed;
+      document.getElementById('countCodeOnly').textContent = codeOnly;
+      document.getElementById('countRuntimeOnly').textContent = runtimeOnly;
+      document.getElementById('countDecoys').textContent = decoys;
+
+      document.getElementById('tabCountIssues').textContent = state.issues.length;
+      document.getElementById('tabCountRoutes').textContent = state.routes.length;
+      document.getElementById('tabCountDecoys').textContent = decoys;
+
+      document.getElementById('telTotalIssues').textContent = state.issues.length;
+      document.getElementById('telRoutesCount').textContent = state.routes.length;
+
+      const totalFair = state.issues
+        .filter(i => i.status === 'Confirmed')
+        .reduce((acc, i) => acc + (Number(i.fair_exposure_inr_lakhs ?? i.fair_risk_inr_lakhs) || 0), 0);
+      document.getElementById('telFairRisk').textContent = `₹${totalFair.toFixed(1)} L`;
+
+      if (state.scans.length > 0) {
+        const latest = state.scans[0];
+        document.getElementById('telDuration').textContent = `${Number(latest.duration_seconds || 0).toFixed(2)}s`;
+        document.getElementById('activeScanBadge').textContent =
+          `Scan #${latest.scan_id} · ${latest.app_name} · ${latest.total_issues} Issues (${latest.confirmed_count} Confirmed)`;
+      }
+    }
+
+    function setStatusFilter(statusValue) {
+      const select = document.getElementById('filterStatus');
+      select.value = select.value === statusValue ? '' : statusValue;
+      document.querySelectorAll('.kpi-card').forEach(c => c.classList.remove('active-filter'));
+      if (select.value === 'Confirmed') document.getElementById('kpiConfirmed').classList.add('active-filter');
+      if (select.value === 'Code only') document.getElementById('kpiCodeOnly').classList.add('active-filter');
+      if (select.value === 'Runtime only') document.getElementById('kpiRuntimeOnly').classList.add('active-filter');
+      switchTab('issues');
+      renderIssuesList();
+    }
+
+    function switchTab(tabName) {
+      state.activeTab = tabName;
+      ['issues', 'routes', 'decoys', 'diff'].forEach(t => {
+        document.getElementById(`tabBtn-${t}`).classList.toggle('active', t === tabName);
+        document.getElementById(`panel-${t}`).style.display = t === tabName ? 'block' : 'none';
+      });
+      document.getElementById('issueFiltersBar').style.display = tabName === 'issues' ? 'flex' : 'none';
+    }
+
+    function renderIssuesList() {
+      const container = document.getElementById('panel-issues');
+      const statusFilter = document.getElementById('filterStatus').value;
+      const cweFilter = document.getElementById('filterCwe').value;
+
+      const filtered = state.issues.filter(item => {
+        if (statusFilter && item.status !== statusFilter) return false;
+        if (cweFilter && item.cwe !== cweFilter) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div style="padding:48px 24px; text-align:center; color:var(--color-tx-tertiary);">
+            <p class="font-season" style="font-size:24px; color:var(--color-tx); margin-bottom:6px;">No Correlated Issues Match Current Filter</p>
+            <p style="font-size:14px;">Click <strong>"Run Correlation Scan"</strong> above to execute AST Route Mapping + SAST + 2-Phase DAST + Deterministic Correlation.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(issue => {
+        const statusClass =
+          issue.status === 'Confirmed' ? 'badge-confirmed' :
+          issue.status === 'Code only' ? 'badge-code-only' : 'badge-runtime-only';
+
+        const urlDisplay = issue.url || issue.canonical_path || '— (Static Source Only)';
+        const paramDisplay = issue.parameter || issue.param || '—';
+        const fileLineDisplay = issue.file ? `${issue.file}:${issue.line || '?'}` : '— (Runtime HTTP Layer)';
+        const payloadDisplay = issue.payload ? escapeHtml(issue.payload) : '—';
+
+        return `
+          <article class="issue-row" onclick="openInspector(${issue.id})">
+            <div class="issue-row-header">
+              <div class="issue-main-meta">
+                <span class="badge ${statusClass}">${escapeHtml(issue.status)}</span>
+                <span class="badge-cwe">${escapeHtml(issue.cwe)}</span>
+                <span class="badge badge-sev-${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)} · Score ${Number(issue.risk_score).toFixed(1)}</span>
+                <h3 class="issue-title">${escapeHtml(issue.title)}</h3>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="mono-chip" title="Merged scanner findings (FR-6)">Findings: ${issue.finding_count || 1}</span>
+                <span class="btn-pill btn-secondary" style="min-height:30px; padding:4px 12px; font-size:12px;">Inspect FR-8 →</span>
+              </div>
+            </div>
+
+            <div class="issue-summary-pills">
+              <span><strong>Endpoint:</strong> <code class="mono-chip">${escapeHtml(issue.method || 'GET')} ${escapeHtml(urlDisplay)}</code></span>
+              <span><strong>Parameter:</strong> <code class="mono-chip">${escapeHtml(paramDisplay)}</code></span>
+              <span><strong>Source Sink:</strong> <code class="mono-chip">${escapeHtml(fileLineDisplay)}</code></span>
+              <span><strong>Payload:</strong> <code class="mono-chip">${payloadDisplay}</code></span>
+            </div>
+
+            <div class="b3-link-banner">
+              <strong>B-3 Correlation Proof:</strong>
+              <span>${escapeHtml(issue.link_reason)}</span>
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function renderRoutesTable() {
+      const tbody = document.getElementById('routesTableBody');
+      if (!state.routes.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:32px;">No routes mapped yet. Trigger a scan to run FR-4 AST Route Mapping.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = state.routes.map(r => `
+        <tr>
+          <td><span class="badge badge-runtime-only font-mono">${escapeHtml(r.method)}</span></td>
+          <td><code class="mono-chip">${escapeHtml(r.canonical_path || r.path_pattern)}</code></td>
+          <td><code class="font-mono" style="color:var(--color-tx); font-weight:600;">${escapeHtml(r.func_name)}()</code></td>
+          <td><code class="mono-chip">${escapeHtml(r.file)}:${r.start_line}–${r.end_line}</code></td>
+          <td>${(r.params || []).map(p => `<code class="mono-chip">${escapeHtml(p)}</code>`).join(' ') || '—'}</td>
+          <td>${(r.called_funcs || []).map(fn => `<code class="mono-chip">${escapeHtml(fn)}()</code>`).join(' ') || '—'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderDecoysTable() {
+      const tbody = document.getElementById('decoysTableBody');
+      if (!state.decoys.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:32px;">No safe decoys recorded yet. Run a scan to inspect B-2 decoy suppression.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = state.decoys.map(d => `
+        <tr>
+          <td><span class="badge badge-decoy">Suppressed (B-2 Safe Decoy)</span></td>
+          <td><span class="badge-cwe">${escapeHtml(d.cwe)}</span></td>
+          <td><code class="mono-chip">${escapeHtml(d.file || '—')}:${d.line || '?'}</code></td>
+          <td><code class="mono-chip">${escapeHtml(d.snippet || '—')}</code></td>
+          <td>${escapeHtml(d.decoy_reason || d.evidence || 'Protected via parameterized query / contextual escaping')}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function openInspector(issueId) {
+      const res = await fetch(`/issues/${issueId}`);
+      if (!res.ok) {
+        showToast(`Failed to load Issue #${issueId}`);
+        return;
+      }
+      const issue = await res.json();
+      state.selectedIssueId = issue.id;
+
+      const statusClass =
+        issue.status === 'Confirmed' ? 'badge-confirmed' :
+        issue.status === 'Code only' ? 'badge-code-only' : 'badge-runtime-only';
+
+      document.getElementById('sheetBadges').innerHTML = `
+        <span class="badge ${statusClass}">${escapeHtml(issue.status)}</span>
+        <span class="badge-cwe">${escapeHtml(issue.cwe)}</span>
+        <span class="badge badge-sev-${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)} · Risk ${Number(issue.risk_score).toFixed(1)}</span>
+        <span class="mono-chip">Issue #${issue.id} · Fingerprint: ${escapeHtml((issue.fingerprint || '').slice(0, 38))}…</span>
+      `;
+      document.getElementById('sheetTitle').textContent = issue.title;
+
+      const sastSnippets = (issue.sast_evidence || []).map(sf =>
+        `// Scanner: ${sf.scanner_name || 'core-sast'} | ${sf.file || ''}:${sf.line || ''}\n${sf.snippet || sf.evidence || ''}`
+      ).join('\n\n') || (issue.code_snippet || '// No static source sink (Runtime-only exposure)');
+
+      const dastProofs = (issue.dast_evidence || []).map(df =>
+        `HTTP ${df.method || 'GET'} ${df.url || ''}\nParameter: ${df.param || '—'}\nPayload:   ${df.payload || '—'}\nEvidence:  ${df.evidence || ''}`
+      ).join('\n\n') || (issue.payload ? `Payload: ${issue.payload}` : '// No active runtime proof recorded (Code-only sink)');
+
+      document.getElementById('sheetBody').innerHTML = `
+        <!-- Mandatory 8 FR-8 Fields Matrix -->
+        <div>
+          <p class="eyebrow" style="margin-bottom:8px;">Unified Evidence Matrix</p>
+          <div class="fr8-grid">
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">1. URL</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.url || issue.canonical_path || '—')}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">2. Parameter</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.parameter || issue.param || '—')}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">3. Payload</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.payload || '—')}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">4. Source File</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.file || '—')}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">5. Line Number</div>
+              <div class="fr8-cell-val">${issue.line !== null && issue.line !== undefined ? issue.line : '—'}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">6. CWE Identifier</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.cwe)}</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">7. Severity & Score</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.severity)} (${Number(issue.risk_score).toFixed(1)})</div>
+            </div>
+            <div class="fr8-cell">
+              <div class="fr8-cell-label">8. Handler / Sink</div>
+              <div class="fr8-cell-val">${escapeHtml(issue.func_name || issue.handler_func || '—')}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- B-3 Deterministic Correlation Formula Explanation -->
+        <div class="b3-link-banner" style="margin-top:0;">
+          <strong>Deterministic Correlation Proof:</strong>
+          <span>${escapeHtml(issue.link_reason)}</span>
+        </div>
+
+        <!-- Side-by-Side Static Code Snippet vs Runtime HTTP Proof -->
+        <div class="evidence-split">
+          <div class="evidence-card">
+            <div class="evidence-card-head">
+              <span>SAST Code Evidence (${(issue.sast_evidence || []).length} Finding${(issue.sast_evidence || []).length === 1 ? '' : 's'})</span>
+              <span class="mono-chip">${escapeHtml(issue.file || 'N/A')}:${issue.line || '—'}</span>
+            </div>
+            <pre class="code-box">${escapeHtml(sastSnippets)}</pre>
+          </div>
+
+          <div class="evidence-card">
+            <div class="evidence-card-head">
+              <span>DAST Runtime Evidence (${(issue.dast_evidence || []).length} Probe${(issue.dast_evidence || []).length === 1 ? '' : 's'})</span>
+              <span class="mono-chip">${escapeHtml(issue.method || 'HTTP')}</span>
+            </div>
+            <pre class="code-box">${escapeHtml(dastProofs)}</pre>
+          </div>
+        </div>
+
+        <!-- Bonus B-4 Plain-English Fix Suggestion & Compliance Impact -->
+        <div class="fix-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span class="eyebrow" style="color:var(--color-sr-green-800);">Remediation & Secure Code Pattern</span>
+            <span class="badge badge-decoy">Remediation SLA: ${issue.sebi_cscrf_sla_days || issue.sebi_sla_days || 7} Days</span>
+          </div>
+          <p style="font-size:14px; color:var(--color-sr-green-900); font-weight:500; line-height:1.55;">
+            ${escapeHtml(issue.fix_suggestion)}
+          </p>
+        </div>
+      `;
+
+      scrimEl.classList.add('open');
+      animateSheetSpring(0, 0, 1.0, 0.34);
+    }
+
+    function closeInspector() {
+      scrimEl.classList.remove('open');
+      const width = sheetEl.offsetWidth || 920;
+      animateSheetSpring(width + 40, 0, 1.0, 0.30);
+    }
+
+    async function triggerScan(silent = false) {
+      const btn = document.getElementById('btnRunScan');
+      const label = document.getElementById('btnRunScanLabel');
+      const sourceDir = document.getElementById('inputSourceDir').value.trim();
+      const targetUrl = document.getElementById('inputTargetUrl').value.trim();
+      const appName = document.getElementById('inputAppName').value.trim() || 'cyberforge-web-shop';
+
+      label.textContent = 'Scanning AST + DAST…';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/scans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            app_name: appName,
+            source_dir: sourceDir || null,
+            target_url: targetUrl || null,
+            run_live_dast: true,
+            seed_checkpoint_slice_if_empty: true
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(`Blocked: ${data.detail || 'Scan error'}`);
+          return null;
+        }
+        await loadDashboardData();
+        if (!silent) {
+          showToast(`Scan #${data.scan_id} complete: ${data.confirmed_count} Confirmed, ${data.code_only_count} Code-only, ${data.runtime_only_count} Runtime-only`);
+        }
+        return data;
+      } catch (err) {
+        showToast(`Request error: ${err.message}`);
+        return null;
+      } finally {
+        label.textContent = 'Run Scan';
+        btn.disabled = false;
+      }
+    }
+
+    async function runIdempotencyCheck() {
+      showToast('Running 2 consecutive scans to verify idempotency…');
+      const first = await triggerScan(true);
+      if (!first) return;
+      const second = await triggerScan(true);
+      if (!second) return;
+
+      const msg = `Idempotency Verified: Scan #${first.scan_id} (${first.total_issues} issues) → Scan #${second.scan_id} (${second.total_issues} issues, 0 duplicates created)`;
+      document.getElementById('idempotencyStatus').textContent = msg;
+      showToast(msg);
+    }
+
+    async function compareLatestScans() {
+      const appName = document.getElementById('inputAppName').value.trim();
+      const res = await fetch(`/scans/compare${appName ? `?app_name=${encodeURIComponent(appName)}` : ''}`);
+      const area = document.getElementById('diffContentArea');
+      switchTab('diff');
+
+      if (!res.ok) {
+        const err = await res.json();
+        area.innerHTML = `<p style="color:var(--color-tx-secondary);">${escapeHtml(err.detail || 'Run at least 2 scans to compare.')}</p>`;
+        return;
+      }
+      const diff = await res.json();
+      const counts = diff.counts || { new: 0, fixed: 0, still_open: 0 };
+      document.getElementById('tabCountDiff').textContent = counts.new + counts.fixed + counts.still_open;
+
+      const allDiffItems = [
+        ...(diff.new_issues || []),
+        ...(diff.fixed_issues || []),
+        ...(diff.still_open_issues || [])
+      ];
+
+      area.innerHTML = `
+        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
+          <span class="badge badge-diff-NEW">NEW: ${counts.new}</span>
+          <span class="badge badge-diff-FIXED">FIXED: ${counts.fixed}</span>
+          <span class="badge badge-diff-STILL-OPEN">STILL-OPEN: ${counts.still_open}</span>
+          <span class="mono-chip">Base Scan #${diff.base_scan_id} → Target Scan #${diff.target_scan_id}</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${allDiffItems.map(item => `
+            <div style="padding:12px 16px; border:1px solid var(--color-st); border-radius:var(--radius-md); display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="badge badge-diff-${escapeHtml(item.diff_status)}">${escapeHtml(item.diff_status)}</span>
+                <span class="badge-cwe">${escapeHtml(item.cwe)}</span>
+                <strong>${escapeHtml(item.title)}</strong>
+              </div>
+              <code class="mono-chip">${escapeHtml(item.url || item.file || '—')}</code>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // Boot: load existing SQLite state or auto-seed Checkpoint 1 slice if DB is empty
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadDashboardData();
+      if (state.issues.length === 0) {
+        await triggerScan(true);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -2,10 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Environments
 .env
 .venv
+.venv/
 env/
 venv/
 ENV/
@@ -16,3 +18,8 @@ ENV/
 .DS_Store
 Thumbs.db
 *.log
+
+# SQLite runtime databases
+*.db
+*.sqlite
+*.sqlite3

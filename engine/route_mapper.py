@@ -17,7 +17,7 @@ import ast
 import os
 import re
 from typing import List, Dict, Optional, Set, Tuple
-from core.schemas import RouteEntry
+from core.schemas import CalledFunction, RouteEntry
 
 
 def _normalize_route_pattern_to_regex(pattern: str) -> str:
@@ -341,8 +341,26 @@ class RouteMapper:
         if js_files:
             self._scan_express_files(js_files)
 
-        # Compile regex matchers
+        # Populate called_func_details and compile regex matchers
         for r in self.routes:
+            expanded = self._expand_called_functions(set(r.called_funcs), max_hops=3)
+            details = list(r.called_func_details)
+            seen_defs = {(d.name, d.file, d.start_line) for d in details}
+            for h_name in sorted(expanded):
+                for h_file, h_start, h_end, _, _ in self.func_defs.get(h_name, []):
+                    key = (h_name, h_file, h_start)
+                    if key not in seen_defs:
+                        seen_defs.add(key)
+                        details.append(
+                            CalledFunction(
+                                name=h_name,
+                                file=h_file,
+                                start_line=h_start,
+                                end_line=h_end,
+                            )
+                        )
+            r.called_func_details = details
+
             pat = r.regex_pattern or _normalize_route_pattern_to_regex(r.path_pattern)
             try:
                 comp = re.compile(pat, re.IGNORECASE)
