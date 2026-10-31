@@ -1066,3 +1066,313 @@ def test_adversarial_review_regression_suite() -> None:
                 assert "inspectorSheet" in html_200.text
         finally:
             os.environ.pop("CYBERFORGE_DB_PATH", None)
+
+
+# ===========================================================================
+# Phase 2 Person B Tests: Task B2.1, Task B2.2, and Task B2.3
+# ===========================================================================
+
+
+def test_phase2_b21_adaptive_dast_scope_reduction() -> None:
+    """
+    Task B2.1: Verify DASTScanner enforces Adaptive Scope Reduction when
+    `sast_findings` or `probe_plan` is supplied:
+      - `PRUNED_SAFE` route (`/safe-about`) receives 0 active fuzzing probes.
+      - `TARGETED_REDUCTION` route (`/orders` tainted only on `id` for `CWE-89`)
+        only executes SQLi probes on `id` and skips XSS/CMDi/Redirect/Traversal.
+      - `RUNTIME_DRIFT_EXTRA` route (`/legacy-drift?q=1`, discovered via HTML crawl
+        and absent from AST routes) receives full 5-CWE active probing.
+    """
+    from engine.dast_scanner import DASTScanner, XSS_SCRIPT_CANARY
+
+    probe_log: List[Tuple[str, str, Dict[str, str]]] = []
+    vuln_Target = FastAPI()
+
+    @vuln_Target.get("/", response_class=HTMLResponse)
+    async def index_page() -> str:
+        # Links to an unmapped runtime drift endpoint `/legacy-drift?q=hello`
+        return '<html><body><a href="/legacy-drift?q=hello">Legacy</a></body></html>'
+
+    @vuln_Target.get("/safe-about", response_class=HTMLResponse)
+    async def safe_about(page: str = "1", theme: str = "dark") -> str:
+        probe_log.append(("GET", "/safe-about", {"page": page, "theme": theme}))
+        return f"<html><body>Safe About page={page}</body></html>"
+
+    @vuln_Target.get("/orders", response_class=HTMLResponse)
+    async def orders_ep(id: str = "1", sort: str = "asc") -> str:
+        probe_log.append(("GET", "/orders", {"id": id, "sort": sort}))
+        if "'" in id:
+            return "<html><body>sqlite3.OperationalError: near \"'\": syntax error</body></html>"
+        return f"<html><body>Order #{id}</body></html>"
+
+    @vuln_Target.get("/legacy-drift", response_class=HTMLResponse)
+    async def legacy_drift_ep(q: str = "hello") -> str:
+        probe_log.append(("GET", "/legacy-drift", {"q": q}))
+        return f"<html><body>Legacy search: {q}</body></html>"
+
+    ast_routes = [
+        RouteEntry(
+            method="GET",
+            path_pattern="/safe-about",
+            file="app.py",
+            func_name="safe_about",
+            start_line=10,
+            end_line=18,
+            params=["page", "theme"],
+            param_sources={"page": "query", "theme": "query"},
+        ),
+        RouteEntry(
+            method="GET",
+            path_pattern="/orders",
+            file="app.py",
+            func_name="orders_ep",
+            start_line=20,
+            end_line=32,
+            params=["id", "sort"],
+            param_sources={"id": "query", "sort": "query"},
+        ),
+    ]
+
+    # SAST only flags CWE-89 on `id` in `/orders` (app.py:25)
+    sast_findings = [
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="cyberforge-sast",
+            cwe="CWE-89",
+            title="SQL Injection in orders_ep",
+            severity="Critical",
+            confidence="High",
+            file="app.py",
+            line=25,
+            func_name="orders_ep",
+            param="id",
+            snippet='cursor.execute(f"SELECT * FROM orders WHERE id = \'{id}\'")',
+        )
+    ]
+
+    transport = httpx.ASGITransport(app=vuln_Target)
+    scanner = DASTScanner(
+        base_url="http://127.0.0.1:8000",
+        transport=transport,
+        enable_crawl=True,
+        enable_passive_checks=True,
+    )
+    findings = asyncio.run(scanner.scan(routes=ast_routes, sast_findings=sast_findings))
+
+    # 1. `/safe-about` was fetched ONCE for clean baseline, 0 active fuzzing probes sent!
+    safe_requests = [params for _, path, params in probe_log if path == "/safe-about"]
+    assert len(safe_requests) == 1, f"Expected 1 baseline request on PRUNED_SAFE route, got {len(safe_requests)}"
+
+    # 2. `/orders` was only probed for CWE-89 on `id` (no XSS canary sent to `/orders` and `sort` untouched at baseline default "test")
+    orders_requests = [params for _, path, params in probe_log if path == "/orders"]
+    assert len(orders_requests) >= 2  # baseline + SQLi quote probe
+    assert all(XSS_SCRIPT_CANARY not in p.get("id", "") for p in orders_requests)
+    assert all(p.get("sort") == "test" for p in orders_requests)
+
+    # 3. Crawled `/legacy-drift` is RUNTIME_DRIFT_EXTRA -> receives full probing including XSS canary
+    drift_requests = [params for _, path, params in probe_log if path == "/legacy-drift"]
+    assert any(XSS_SCRIPT_CANARY in p.get("q", "") for p in drift_requests)
+
+    # 4. Both CWE-89 on `/orders` and CWE-79 on `/legacy-drift` were caught
+    cwes_by_path = {(f.canonical_path, f.cwe) for f in findings}
+    assert ("/orders", "CWE-89") in cwes_by_path
+    assert ("/legacy-drift", "CWE-79") in cwes_by_path
+
+    # 5. `scanner.last_scope_reduction` telemetry is populated
+    report = scanner.last_scope_reduction
+    assert report is not None
+    assert report.naive_probe_count > report.reduced_probe_count
+    assert report.probes_saved_count > 0
+    assert report.runtime_drift_routes >= 1
+    assert getattr(report, "drifted_routes", None) == report.runtime_drift_routes
+    assert "O(" in getattr(report, "time_complexity_summary", "")
+
+
+def test_phase2_b22_auto_verify_code_only_to_confirmed() -> None:
+    """
+    Task B2.2: Verify `engine/auto_verify.py` (`B-1` Code-Only -> Confirmed Active Verifier)
+    synthesizes targeted diagnostic probes for `Code only` issues mapped to AST `RouteEntry`
+    items, upgrades verified issues to `Confirmed`, sets `auto_verified = True`, attaches
+    `dast_evidence` (`phase="B1-Auto-Verify"`), and recomputes `risk_score`.
+    """
+    from core.schemas import compute_issue_risk_score
+    from engine.auto_verify import auto_verify_code_only_issues_sync
+
+    routes = [
+        RouteEntry(
+            method="GET",
+            path_pattern="/api/orders",
+            file="orders.py",
+            func_name="get_order",
+            start_line=10,
+            end_line=35,
+            params=["id"],
+            param_sources={"id": "query"},
+        ),
+        RouteEntry(
+            method="GET",
+            path_pattern="/api/redirect",
+            file="auth.py",
+            func_name="login_redirect",
+            start_line=40,
+            end_line=60,
+            params=["next"],
+            param_sources={"next": "query"},
+        ),
+    ]
+
+    sast_sqli = CanonicalFinding(
+        source="SAST",
+        scanner_name="cyberforge-sast",
+        cwe="CWE-89",
+        title="SQL Injection in get_order",
+        severity="Critical",
+        confidence="High",
+        file="orders.py",
+        line=22,
+        func_name="get_order",
+        param="id",
+        snippet='cursor.execute(f"SELECT * FROM orders WHERE id = {id}")',
+    )
+    sast_redir = CanonicalFinding(
+        source="SAST",
+        scanner_name="cyberforge-sast",
+        cwe="CWE-601",
+        title="Open Redirect in login_redirect",
+        severity="Medium",
+        confidence="High",
+        file="auth.py",
+        line=48,
+        func_name="login_redirect",
+        param="next",
+        snippet="return RedirectResponse(url=next, status_code=302)",
+    )
+    sast_secret = CanonicalFinding(
+        source="SAST",
+        scanner_name="cyberforge-sast",
+        cwe="CWE-798",
+        title="Hardcoded Secret Key",
+        severity="High",
+        confidence="High",
+        file="config.py",
+        line=8,
+        func_name="settings",
+        snippet='SECRET_KEY = "sk_live_hardcoded"',
+    )
+
+    code_only_sqli = CorrelatedIssue(
+        status="Code only",
+        cwe="CWE-89",
+        title=sast_sqli.title,
+        severity="Critical",
+        risk_score=compute_issue_risk_score("Code only", "Critical", "CWE-89"),
+        file="orders.py",
+        line=22,
+        func_name="get_order",
+        param="id",
+        snippet=sast_sqli.snippet,
+        sast_evidence=[sast_sqli],
+        dast_evidence=[],
+    )
+    code_only_redir = CorrelatedIssue(
+        status="Code only",
+        cwe="CWE-601",
+        title=sast_redir.title,
+        severity="Medium",
+        risk_score=compute_issue_risk_score("Code only", "Medium", "CWE-601"),
+        file="auth.py",
+        line=48,
+        func_name="login_redirect",
+        param="next",
+        snippet=sast_redir.snippet,
+        sast_evidence=[sast_redir],
+        dast_evidence=[],
+    )
+    code_only_secret = CorrelatedIssue(
+        status="Code only",
+        cwe="CWE-798",
+        title=sast_secret.title,
+        severity="High",
+        risk_score=compute_issue_risk_score("Code only", "High", "CWE-798"),
+        file="config.py",
+        line=8,
+        func_name="settings",
+        snippet=sast_secret.snippet,
+        sast_evidence=[sast_secret],
+        dast_evidence=[],
+    )
+
+    initial_sqli_score = code_only_sqli.risk_score
+    transport = httpx.ASGITransport(app=build_mock_shop_asgi_app())
+
+    upgraded = auto_verify_code_only_issues_sync(
+        base_url="http://127.0.0.1:8000",
+        routes=routes,
+        issues=[code_only_sqli, code_only_redir, code_only_secret],
+        transport=transport,
+    )
+
+    by_cwe = {i.cwe: i for i in upgraded}
+    assert by_cwe["CWE-89"].status == "Confirmed"
+    assert by_cwe["CWE-89"].auto_verified is True
+    assert by_cwe["CWE-89"].risk_score > initial_sqli_score
+    assert len(by_cwe["CWE-89"].dast_evidence) == 1
+    assert by_cwe["CWE-89"].dast_evidence[0].phase == "B1-Auto-Verify"
+    assert "B-1 Auto-Verify" in (by_cwe["CWE-89"].link_reason or "")
+
+    assert by_cwe["CWE-601"].status == "Confirmed"
+    assert by_cwe["CWE-601"].auto_verified is True
+    assert len(by_cwe["CWE-601"].dast_evidence) == 1
+
+    # CWE-798 is static-only and must remain `Code only`
+    assert by_cwe["CWE-798"].status == "Code only"
+    assert by_cwe["CWE-798"].auto_verified is False
+
+
+def test_phase2_b23_api_scope_reduction_telemetry_and_get_scan_by_id() -> None:
+    """
+    Task B2.3: Verify `POST /scans` and `GET /scans/{scan_id}` expose the
+    `scope_reduction` telemetry dictionary (`naive_probe_count`, `reduced_probe_count`,
+    `probes_saved_count`, `scope_reduction_pct`, `exact_replica_routes`,
+    `drifted_routes`, `time_complexity_summary`) for the Judge Complexity Banner.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "scope_telemetry.db")
+        os.environ["CYBERFORGE_DB_PATH"] = db_path
+        try:
+            with TestClient(gordon_api_app) as client:
+                post_res = client.post(
+                    "/scans",
+                    json={
+                        "app_name": "telemetry-shop",
+                        "run_live_dast": False,
+                        "seed_checkpoint_slice_if_empty": True,
+                    },
+                )
+                assert post_res.status_code == 200
+                post_json = post_res.json()
+                scan_id = post_json["scan_id"]
+
+                for payload in (
+                    post_json,
+                    client.get(f"/scans/{scan_id}").json(),
+                ):
+                    sr = payload.get("scope_reduction")
+                    assert sr is not None, "Expected scope_reduction in ScanSummary response"
+                    assert sr["naive_probe_count"] > 0
+                    assert sr["reduced_probe_count"] < sr["naive_probe_count"]
+                    assert sr["probes_saved_count"] == (
+                        sr["naive_probe_count"] - sr["reduced_probe_count"]
+                    )
+                    assert sr["scope_reduction_pct"] > 0
+                    assert "exact_replica_routes" in sr
+                    assert "drifted_routes" in sr
+                    assert "time_complexity_summary" in sr
+                    assert "O(" in sr["time_complexity_summary"]
+
+                # Missing scan ID returns 404
+                not_found = client.get("/scans/999999")
+                assert not_found.status_code == 404
+        finally:
+            os.environ.pop("CYBERFORGE_DB_PATH", None)
+
