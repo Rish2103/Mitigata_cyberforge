@@ -293,6 +293,53 @@ BUNDLED_ADVISORIES: List[Dict[str, Any]] = [
         "symbol_source": "unknown",
         "summary": "Spring4Shell RCE via data binding in Spring MVC / Spring WebFlux",
     },
+    # Go (golang) advisories
+    {
+        "advisory_id": "GHSA-w73w-5m7g-f7qc",
+        "cve_id": "CVE-2020-26160",
+        "package": "github.com/dgrijalva/jwt-go",
+        "ecosystem": "golang",
+        "affected_versions": "<4.0.0",
+        "fixed_version": "4.0.0",
+        "severity": Severity.HIGH,
+        "cvss_score": 7.5,
+        "epss_score": 0.72,
+        "is_kev": False,
+        "vulnerable_symbols": ["Parse", "ParseWithClaims", "VerifyAudience"],
+        "symbol_source": "osv",
+        "summary": "jwt-go authorization bypass via improper audience claim validation",
+    },
+    {
+        "advisory_id": "GHSA-2c4m-59x9-fr2g",
+        "cve_id": "CVE-2023-29401",
+        "package": "github.com/gin-gonic/gin",
+        "ecosystem": "golang",
+        "affected_versions": "<1.9.1",
+        "fixed_version": "1.9.1",
+        "severity": Severity.HIGH,
+        "cvss_score": 7.5,
+        "epss_score": 0.45,
+        "is_kev": False,
+        "vulnerable_symbols": ["SaveUploadedFile"],
+        "symbol_source": "osv",
+        "summary": "Gin Web Framework arbitrary file overwrite via filename injection in Context.SaveUploadedFile",
+    },
+    # PHP (composer) advisories
+    {
+        "advisory_id": "GHSA-cwmx-hcrq-mhc3",
+        "cve_id": "CVE-2022-31090",
+        "package": "guzzlehttp/guzzle",
+        "ecosystem": "composer",
+        "affected_versions": "<7.4.5",
+        "fixed_version": "7.4.5",
+        "severity": Severity.HIGH,
+        "cvss_score": 8.1,
+        "epss_score": 0.65,
+        "is_kev": False,
+        "vulnerable_symbols": ["request", "send", "get"],
+        "symbol_source": "osv",
+        "summary": "Guzzle HTTP client Authorization header and cookie leakage across cross-origin redirects",
+    },
 ]
 
 # Maps Java import package prefixes to canonical Maven artifactId
@@ -304,8 +351,14 @@ MAVEN_IMPORT_PREFIX_MAP: Dict[str, str] = {
     "org.springframework.web": "spring-webmvc",
 }
 
+# Maps PHP namespace prefixes to canonical Composer package names
+PHP_NAMESPACE_MAP: Dict[str, str] = {
+    "guzzlehttp": "guzzlehttp/guzzle",
+    "monolog": "monolog/monolog",
+}
 
-# Top popular PyPI, npm & Maven packages for Levenshtein typosquat detection (Step 5)
+
+# Top popular PyPI, npm, Maven, Go & Composer packages for Levenshtein typosquat detection (Step 5)
 POPULAR_PACKAGES: Dict[str, Set[str]] = {
     "pypi": {
         "requests",
@@ -362,6 +415,19 @@ POPULAR_PACKAGES: Dict[str, Set[str]] = {
         "lombok",
         "slf4j-api",
         "hibernate-core",
+    },
+    "golang": {
+        "github.com/gin-gonic/gin",
+        "github.com/dgrijalva/jwt-go",
+        "github.com/gorilla/mux",
+        "github.com/labstack/echo",
+        "gorm.io/gorm",
+    },
+    "composer": {
+        "guzzlehttp/guzzle",
+        "monolog/monolog",
+        "laravel/framework",
+        "symfony/http-foundation",
     },
 }
 
@@ -604,6 +670,10 @@ class SCAReachabilityEngine:
                     sbom.extend(self._parse_pom_xml(full_path, rel_path))
                 elif fname in ("build.gradle", "build.gradle.kts"):
                     sbom.extend(self._parse_build_gradle(full_path, rel_path))
+                elif fname == "go.mod":
+                    sbom.extend(self._parse_go_mod(full_path, rel_path))
+                elif fname == "composer.json":
+                    sbom.extend(self._parse_composer_json(full_path, rel_path))
                 elif fname in (".npmrc", "pip.conf", "settings.xml"):
                     has_private_registry = True
 
@@ -871,6 +941,69 @@ class SCAReachabilityEngine:
             pass
         return deps
 
+    def _parse_go_mod(self, full_path: str, rel_path: str) -> List[SBOMDependency]:
+        deps: List[SBOMDependency] = []
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            for idx, line_s in enumerate(lines):
+                lineno = idx + 1
+                stripped = line_s.strip()
+                if not stripped or stripped.startswith(("//", "module ", "go ", "require (", ")")):
+                    continue
+                if stripped.startswith("require "):
+                    stripped = stripped[len("require "):].strip()
+                is_indirect = "// indirect" in stripped
+                code_part = stripped.split("//", 1)[0].strip()
+                parts = code_part.split()
+                if len(parts) >= 2 and parts[1].startswith("v"):
+                    pkg_name = parts[0].strip().lower()
+                    raw_ver = parts[1].lstrip("v")
+                    deps.append(
+                        SBOMDependency(
+                            name=pkg_name,
+                            version=raw_ver,
+                            ecosystem="golang",
+                            is_direct=not is_indirect,
+                            is_pinned=True,
+                            transitive_path=["root", "indirect", pkg_name] if is_indirect else ["root", pkg_name],
+                            source_file=rel_path,
+                            line=lineno,
+                        )
+                    )
+        except Exception:
+            pass
+        return deps
+
+    def _parse_composer_json(self, full_path: str, rel_path: str) -> List[SBOMDependency]:
+        deps: List[SBOMDependency] = []
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+            for section in ("require", "require-dev"):
+                sec = data.get(section, {})
+                if isinstance(sec, dict):
+                    for pkg_name, ver_spec in sec.items():
+                        if pkg_name.lower() == "php" or pkg_name.lower().startswith("ext-"):
+                            continue
+                        raw_spec = str(ver_spec).strip()
+                        is_pinned = bool(re.match(r"^\d+\.\d+\.\d+$", raw_spec))
+                        clean_ver = raw_spec.lstrip("^~>=<v") or raw_spec
+                        deps.append(
+                            SBOMDependency(
+                                name=pkg_name.lower(),
+                                version=clean_ver,
+                                ecosystem="composer",
+                                is_direct=True,
+                                is_pinned=is_pinned,
+                                transitive_path=["root", pkg_name.lower()],
+                                source_file=rel_path,
+                            )
+                        )
+        except Exception:
+            pass
+        return deps
+
     # =========================================================================
     # STEP 2 & 3: GHSA Match + Function Map (OSV Symbols & Fix-Commit Diffs)
     # =========================================================================
@@ -1059,6 +1192,58 @@ class SCAReachabilityEngine:
                                     sym = call_m.group(1)
                                     for maven_pkg in active_java_pkgs:
                                         library_calls.append((rel_path, "<java_method>", maven_pkg, sym, lineno))
+                except Exception:
+                    pass
+
+            elif fname.endswith(".go"):
+                try:
+                    active_go_pkgs: Dict[str, str] = {}
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        for idx, line_s in enumerate(f):
+                            lineno = idx + 1
+                            stripped = line_s.strip()
+                            if not stripped or stripped.startswith("//"):
+                                continue
+                            # Match Go import path e.g. "github.com/dgrijalva/jwt-go" or jwt "github.com/dgrijalva/jwt-go"
+                            imp_m = re.search(r"""(?:([a-zA-Z_]\w*)\s+)?["'](github\.com/[^"']+|gorm\.io/[^"']+)["']""", stripped)
+                            if imp_m:
+                                alias = imp_m.group(1)
+                                pkg_path = imp_m.group(2).lower()
+                                imported_packages.setdefault(pkg_path, (rel_path, lineno))
+                                default_alias = pkg_path.rsplit("/", 1)[-1].split("-")[0]
+                                active_go_pkgs[alias or default_alias] = pkg_path
+                                active_go_pkgs[pkg_path.rsplit("/", 1)[-1].replace("-", "")] = pkg_path
+                            elif active_go_pkgs and "." in stripped and "(" in stripped:
+                                for call_m in re.finditer(r"\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)\s*\(", stripped):
+                                    recv, sym = call_m.group(1), call_m.group(2)
+                                    if recv in active_go_pkgs:
+                                        library_calls.append((rel_path, "<go_func>", active_go_pkgs[recv], sym, lineno))
+                                    else:
+                                        for go_pkg in set(active_go_pkgs.values()):
+                                            library_calls.append((rel_path, "<go_func>", go_pkg, sym, lineno))
+                except Exception:
+                    pass
+
+            elif fname.endswith(".php"):
+                try:
+                    active_php_pkgs: Set[str] = set()
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        for idx, line_s in enumerate(f):
+                            lineno = idx + 1
+                            stripped = line_s.strip()
+                            if not stripped or stripped.startswith(("//", "#", "/*")):
+                                continue
+                            if stripped.lower().startswith("use "):
+                                lower_line = stripped.lower()
+                                for ns_prefix, comp_pkg in PHP_NAMESPACE_MAP.items():
+                                    if ns_prefix in lower_line:
+                                        imported_packages.setdefault(comp_pkg, (rel_path, lineno))
+                                        active_php_pkgs.add(comp_pkg)
+                            elif active_php_pkgs and ("->" in stripped or "::" in stripped) and "(" in stripped:
+                                for call_m in re.finditer(r"(?:->|::)\s*([a-zA-Z_]\w*)\s*\(", stripped):
+                                    sym = call_m.group(1)
+                                    for comp_pkg in active_php_pkgs:
+                                        library_calls.append((rel_path, "<php_func>", comp_pkg, sym, lineno))
                 except Exception:
                     pass
 

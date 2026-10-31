@@ -530,6 +530,11 @@ class RouteMapper:
         py_files: List[Tuple[str, str]] = []
         js_files: List[Tuple[str, str]] = []
         java_files: List[Tuple[str, str]] = []
+        polyglot_files: List[Tuple[str, str]] = []
+        polyglot_exts = (
+            ".go", ".php", ".cs", ".rb", ".kt", ".rs",
+            ".scala", ".swift", ".ex", ".exs", ".cpp", ".c", ".cc",
+        )
 
         skip_dirs = {
             "venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build",
@@ -545,6 +550,8 @@ class RouteMapper:
                 js_files.append((self.root_dir, fname))
             elif fname.endswith(".java"):
                 java_files.append((self.root_dir, fname))
+            elif fname.endswith(polyglot_exts):
+                polyglot_files.append((self.root_dir, fname))
         else:
             for dirpath, dirnames, filenames in os.walk(self.root_dir):
                 # Prune build/artifact/vendor directories in-place so os.walk never descends into them
@@ -567,6 +574,8 @@ class RouteMapper:
                         js_files.append((full_path, rel_path))
                     elif fname.endswith(".java"):
                         java_files.append((full_path, rel_path))
+                    elif fname.endswith(polyglot_exts):
+                        polyglot_files.append((full_path, rel_path))
 
         # Pass 1 on Python files: collect cross-file Blueprint / APIRouter prefixes & Pydantic models
         for full_path, rel_path in py_files:
@@ -627,6 +636,10 @@ class RouteMapper:
         # Pass 4 on Java files (Bonus B-7: Java Spring Boot / Jakarta Servlet support)
         if java_files:
             self._scan_java_files(java_files)
+
+        # Pass 5 on Universal Polyglot files (Go, PHP, C#/.NET, Ruby, Kotlin, Rust, Scala, Swift, C/C++)
+        if polyglot_files:
+            self._scan_polyglot_files(polyglot_files)
 
         # Populate multi-hop called_func_details, called_functions, and compile regex matchers
         for r in self.routes:
@@ -1549,6 +1562,466 @@ class RouteMapper:
                 param_name = tokens[-1].strip()
                 if param_type not in ignored_types and re.match(r"^[a-zA-Z_]\w*$", param_name):
                     params.add(param_name)
+        return params
+
+    # -------------------------------------------------------------------------
+    # Universal Polyglot Route Extractor (Go, PHP, C#/.NET, Ruby, Kotlin, Rust, etc.)
+    # -------------------------------------------------------------------------
+    def _scan_polyglot_files(self, polyglot_files: List[Tuple[str, str]]) -> None:
+        """
+        2-Tier Universal Polyglot Route Extractor:
+          - Tier 1: Framework-aware parsers for Go (Gin/Echo/Fiber/net/http), PHP (Laravel/Slim/Native),
+            C# ASP.NET Core ([Route]/[HttpGet]/MapGet), Ruby (Sinatra/Rails), Rust (Actix/Axum), Kotlin.
+          - Tier 2: Universal HTTP route string fallback for any other backend language.
+          - Caps per-file memory by reading at most 2 MB so large files stay fast and bounded.
+        """
+        MAX_POLYGLOT_READ_BYTES = 2 * 1024 * 1024
+
+        for full_path, rel_path in polyglot_files:
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read(MAX_POLYGLOT_READ_BYTES)
+            except Exception:
+                continue
+
+            if not content:
+                continue
+
+            lines = content.splitlines()
+            total_lines = max(1, len(lines))
+            ext = os.path.splitext(rel_path)[1].lower()
+            routes_before = len(self.routes)
+
+            # 1. Pre-index named functions/methods in this file so route tables (e.g. r.GET("/x", myHandler))
+            #    map directly to the handler function's start_line..end_line.
+            local_funcs: Dict[str, Tuple[int, int, str, str]] = {}
+            func_sig_patterns = [
+                # Go: func searchOrders(w http.ResponseWriter, r *http.Request) {
+                r"^\s*func\s+(?:\([^)]+\)\s*)?([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+                # PHP / JS: public function searchOrders($req) {
+                r"^\s*(?:public\s+|protected\s+|private\s+|static\s+)*function\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+                # Rust: pub async fn search_orders(...) {
+                r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+                # Kotlin / Scala: fun searchOrders(...) {
+                r"^\s*(?:suspend\s+|override\s+|public\s+|private\s+)*fun\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+                # Ruby: def search_orders(...)
+                r"^\s*def\s+([a-zA-Z_]\w*)(?:\s*\(([^)]*)\))?",
+                # C#: public IActionResult SearchOrders(string q)
+                r"^\s*(?:public|protected|private)\s+(?:async\s+)?[\w<>\[\],\s\?]+\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+            ]
+
+            for idx, line_s in enumerate(lines):
+                s_strip = line_s.strip()
+                if not s_strip or s_strip.startswith(("//", "#", "/*", "*")):
+                    continue
+                for f_pat in func_sig_patterns:
+                    m_fn = re.match(f_pat, line_s)
+                    if m_fn:
+                        fn_name = m_fn.group(1)
+                        if fn_name in ("if", "for", "while", "switch", "catch", "main"):
+                            continue
+                        raw_args = m_fn.group(2) or ""
+                        start_l = idx + 1
+                        if ext == ".rb":
+                            end_l = self._find_ruby_end_line(lines, idx)
+                        else:
+                            end_l = self._find_brace_end_line(lines, idx)
+                        block_t = "\n".join(lines[start_l - 1 : end_l])
+                        local_funcs[fn_name] = (start_l, end_l, raw_args, block_t)
+                        p_set = self._extract_polyglot_params(block_t, raw_args, "")
+                        c_set = self._extract_js_calls(block_t, exclude_name=fn_name)
+                        self.func_to_file_lines[fn_name] = (rel_path, start_l, end_l)
+                        self.call_graph.setdefault(fn_name, set()).update(c_set)
+                        self.func_defs.setdefault(fn_name, []).append((rel_path, start_l, end_l, c_set, p_set))
+                        break
+
+            # -----------------------------------------------------------------
+            # Language A: Go (.go) — Gin, Echo, Fiber, Chi, Gorilla Mux, net/http
+            # -----------------------------------------------------------------
+            if ext == ".go":
+                group_prefixes: Dict[str, str] = {}
+                for gm in re.finditer(
+                    r"""(\b[a-zA-Z_]\w*)\s*:?=\s*([a-zA-Z_]\w*)\s*\.\s*(?:Group|Route)\s*\(\s*["']([^"']+)["']""",
+                    content,
+                ):
+                    child_var, parent_var, g_pref = gm.group(1), gm.group(2), gm.group(3)
+                    parent_pref = group_prefixes.get(parent_var, "")
+                    group_prefixes[child_var] = self._join_prefixes(parent_pref, g_pref)
+
+                # Match r.GET("/path", handler), app.Post("/path", ...), http.HandleFunc("/path", handler)
+                go_route_re = re.compile(
+                    r"""\b([a-zA-Z_]\w*)\s*\.\s*(GET|POST|PUT|DELETE|PATCH|Get|Post|Put|Delete|Patch|HandleFunc|Handle)\s*\(\s*["']([^"']+)["']\s*,\s*([a-zA-Z_][\w.]*|func\s*\()""",
+                )
+                for rm in go_route_re.finditer(content):
+                    router_var = rm.group(1)
+                    raw_verb = rm.group(2).upper()
+                    http_verb = "GET" if raw_verb in ("HANDLEFUNC", "HANDLE") else raw_verb
+                    sub_path = rm.group(3).strip()
+                    handler_tok = rm.group(4).strip()
+                    reg_line = content[: rm.start()].count("\n") + 1
+                    full_path_pat = self._join_prefixes(group_prefixes.get(router_var, ""), sub_path) or "/"
+
+                    if handler_tok.startswith("func"):
+                        end_l = self._find_brace_end_line(lines, reg_line - 1)
+                        block_t = "\n".join(lines[reg_line - 1 : end_l])
+                        fn_name = f"go_handler_L{reg_line}"
+                        params = self._extract_polyglot_params(block_t, "", full_path_pat)
+                        called = self._extract_js_calls(block_t, exclude_name=fn_name)
+                        start_l = reg_line
+                    else:
+                        fn_name = handler_tok.split(".")[-1]
+                        if fn_name in local_funcs:
+                            start_l, end_l, raw_args, block_t = local_funcs[fn_name]
+                            params = self._extract_polyglot_params(block_t, raw_args, full_path_pat)
+                            called = self._extract_js_calls(block_t, exclude_name=fn_name)
+                        else:
+                            start_l, end_l = reg_line, min(total_lines, reg_line + 25)
+                            block_t = "\n".join(lines[start_l - 1 : end_l])
+                            params = self._extract_polyglot_params(block_t, "", full_path_pat)
+                            called = set()
+
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_verb,
+                            path_pattern=full_path_pat,
+                            regex_pattern=_normalize_route_pattern_to_regex(full_path_pat),
+                            file_path=rel_path,
+                            func_name=fn_name,
+                            start_line=start_l,
+                            end_line=end_l,
+                            parameters=sorted(list(params)),
+                            called_funcs=sorted(list(called)),
+                            auth_context="none",
+                            framework="go",
+                        )
+                    )
+
+            # -----------------------------------------------------------------
+            # Language B: PHP (.php) — Laravel, Slim, Symfony, or Native PHP
+            # -----------------------------------------------------------------
+            elif ext == ".php":
+                php_route_re = re.compile(
+                    r"""(?:Route\s*::\s*|\$[a-zA-Z_]\w*\s*->\s*)(get|post|put|delete|patch|any)\s*\(\s*["']([^"']+)["']([^\n;]*)""",
+                    re.IGNORECASE,
+                )
+                for rm in php_route_re.finditer(content):
+                    raw_v = rm.group(1).upper()
+                    verbs = ["GET", "POST"] if raw_v == "ANY" else [raw_v]
+                    r_path = self._join_prefixes("", rm.group(2).strip()) or "/"
+                    rest_line = rm.group(3) or ""
+                    reg_line = content[: rm.start()].count("\n") + 1
+
+                    # Check if handler points to a controller method e.g. [OrderController::class, 'search'] or 'OrderController@search'
+                    target_fn = None
+                    m_arr = re.search(r"""['"]([a-zA-Z_]\w*)['"]\s*\]""", rest_line)
+                    m_at = re.search(r"""@([a-zA-Z_]\w*)['"]""", rest_line)
+                    if m_at:
+                        target_fn = m_at.group(1)
+                    elif m_arr:
+                        target_fn = m_arr.group(1)
+
+                    if target_fn and target_fn in local_funcs:
+                        start_l, end_l, raw_args, block_t = local_funcs[target_fn]
+                        fn_name = target_fn
+                    else:
+                        start_l = reg_line
+                        end_l = self._find_brace_end_line(lines, reg_line - 1)
+                        block_t = "\n".join(lines[start_l - 1 : end_l])
+                        fn_name = target_fn or f"php_route_L{reg_line}"
+
+                    params = self._extract_polyglot_params(block_t, "", r_path)
+                    called = self._extract_js_calls(block_t, exclude_name=fn_name)
+                    for v in verbs:
+                        self.routes.append(
+                            RouteEntry(
+                                method=v,
+                                path_pattern=r_path,
+                                regex_pattern=_normalize_route_pattern_to_regex(r_path),
+                                file_path=rel_path,
+                                func_name=fn_name,
+                                start_line=start_l,
+                                end_line=end_l,
+                                parameters=sorted(list(params)),
+                                called_funcs=sorted(list(called)),
+                                auth_context="none",
+                                framework="php",
+                            )
+                        )
+
+                # Native standalone PHP script fallback (e.g., orders.php using $_GET / $_POST)
+                if len(self.routes) == routes_before and any(k in content for k in ("$_GET", "$_POST", "$_REQUEST")):
+                    script_path = "/" + rel_path.lstrip("/")
+                    params = self._extract_polyglot_params(content, "", script_path)
+                    verbs = []
+                    if "$_GET" in content or "$_REQUEST" in content:
+                        verbs.append("GET")
+                    if "$_POST" in content or "$_REQUEST" in content:
+                        verbs.append("POST")
+                    for v in (verbs or ["GET"]):
+                        self.routes.append(
+                            RouteEntry(
+                                method=v,
+                                path_pattern=script_path,
+                                regex_pattern=_normalize_route_pattern_to_regex(script_path),
+                                file_path=rel_path,
+                                func_name=os.path.splitext(os.path.basename(rel_path))[0],
+                                start_line=1,
+                                end_line=total_lines,
+                                parameters=sorted(list(params)),
+                                called_funcs=[],
+                                auth_context="none",
+                                framework="php",
+                            )
+                        )
+
+            # -----------------------------------------------------------------
+            # Language C: C# / ASP.NET Core (.cs) — Controllers & Minimal APIs
+            # -----------------------------------------------------------------
+            elif ext == ".cs":
+                ctrl_name_m = re.search(r"\bclass\s+([a-zA-Z_]\w*)Controller\b", content)
+                ctrl_slug = ctrl_name_m.group(1).lower() if ctrl_name_m else "api"
+                class_route_m = re.search(r"""\[\s*Route\s*\(\s*["']([^"']+)["']\s*\)\s*\]""", content)
+                class_prefix = ""
+                if class_route_m:
+                    class_prefix = class_route_m.group(1).replace("[controller]", ctrl_slug)
+
+                # Attribute-routed controller methods: [HttpGet("search")]
+                cs_attr_re = re.compile(
+                    r"""\[\s*Http(Get|Post|Put|Delete|Patch)(?:\s*\(\s*["']([^"']*)["']\s*\))?\s*\]""",
+                    re.IGNORECASE,
+                )
+                for am in cs_attr_re.finditer(content):
+                    http_verb = am.group(1).upper()
+                    sub_p = (am.group(2) or "").strip()
+                    attr_line = content[: am.start()].count("\n") + 1
+                    full_r_path = self._join_prefixes(class_prefix, sub_p) or "/"
+
+                    # Find the method immediately following the attribute
+                    fn_name = f"cs_action_L{attr_line}"
+                    start_l, end_l, raw_args = attr_line, min(total_lines, attr_line + 25), ""
+                    for look_idx in range(attr_line - 1, min(total_lines, attr_line + 8)):
+                        m_cs = re.search(
+                            r"\b(?:public|protected|private)\s+(?:async\s+)?[\w<>\[\],\s\?]+\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)",
+                            lines[look_idx],
+                        )
+                        if m_cs:
+                            fn_name = m_cs.group(1)
+                            raw_args = m_cs.group(2) or ""
+                            end_l = self._find_brace_end_line(lines, look_idx)
+                            break
+
+                    block_t = "\n".join(lines[start_l - 1 : end_l])
+                    params = self._extract_polyglot_params(block_t, raw_args, full_r_path)
+                    called = self._extract_js_calls(block_t, exclude_name=fn_name)
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_verb,
+                            path_pattern=full_r_path,
+                            regex_pattern=_normalize_route_pattern_to_regex(full_r_path),
+                            file_path=rel_path,
+                            func_name=fn_name,
+                            start_line=start_l,
+                            end_line=end_l,
+                            parameters=sorted(list(params)),
+                            called_funcs=sorted(list(called)),
+                            auth_context="aspnet_authorize" if "[Authorize" in block_t else "none",
+                            framework="aspnet",
+                        )
+                    )
+
+                # ASP.NET Minimal APIs: app.MapGet("/api/orders", ...)
+                for mm in re.finditer(
+                    r"""\bMap(Get|Post|Put|Delete|Patch)\s*\(\s*["']([^"']+)["']""",
+                    content,
+                ):
+                    http_verb = mm.group(1).upper()
+                    r_path = self._join_prefixes("", mm.group(2).strip()) or "/"
+                    reg_line = content[: mm.start()].count("\n") + 1
+                    end_l = self._find_brace_end_line(lines, reg_line - 1)
+                    block_t = "\n".join(lines[reg_line - 1 : end_l])
+                    params = self._extract_polyglot_params(block_t, "", r_path)
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_verb,
+                            path_pattern=r_path,
+                            regex_pattern=_normalize_route_pattern_to_regex(r_path),
+                            file_path=rel_path,
+                            func_name=f"map_{http_verb.lower()}_L{reg_line}",
+                            start_line=reg_line,
+                            end_line=end_l,
+                            parameters=sorted(list(params)),
+                            called_funcs=[],
+                            auth_context="none",
+                            framework="aspnet",
+                        )
+                    )
+
+            # -----------------------------------------------------------------
+            # Language D: Ruby (.rb) — Sinatra / Rails
+            # -----------------------------------------------------------------
+            elif ext == ".rb":
+                for rm in re.finditer(
+                    r"""^\s*(get|post|put|delete|patch)\s+["']([^"']+)["']""",
+                    content,
+                    re.MULTILINE | re.IGNORECASE,
+                ):
+                    http_verb = rm.group(1).upper()
+                    r_path = self._join_prefixes("", rm.group(2).strip()) or "/"
+                    start_l = content[: rm.start()].count("\n") + 1
+                    end_l = self._find_ruby_end_line(lines, start_l - 1)
+                    block_t = "\n".join(lines[start_l - 1 : end_l])
+                    params = self._extract_polyglot_params(block_t, "", r_path)
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_verb,
+                            path_pattern=r_path,
+                            regex_pattern=_normalize_route_pattern_to_regex(r_path),
+                            file_path=rel_path,
+                            func_name=f"ruby_{http_verb.lower()}_L{start_l}",
+                            start_line=start_l,
+                            end_line=end_l,
+                            parameters=sorted(list(params)),
+                            called_funcs=[],
+                            auth_context="none",
+                            framework="ruby",
+                        )
+                    )
+
+            # -----------------------------------------------------------------
+            # Language E: Rust (.rs) — Actix-web & Axum
+            # -----------------------------------------------------------------
+            elif ext == ".rs":
+                for rm in re.finditer(
+                    r"""#\[\s*(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']\s*\)\s*\]""",
+                    content,
+                    re.IGNORECASE,
+                ):
+                    http_verb = rm.group(1).upper()
+                    r_path = self._join_prefixes("", rm.group(2).strip()) or "/"
+                    start_l = content[: rm.start()].count("\n") + 1
+                    end_l = self._find_brace_end_line(lines, start_l - 1)
+                    fn_name = f"rust_{http_verb.lower()}_L{start_l}"
+                    raw_args = ""
+                    for look_idx in range(start_l - 1, min(total_lines, start_l + 6)):
+                        m_rs = re.search(r"\bfn\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)", lines[look_idx])
+                        if m_rs:
+                            fn_name = m_rs.group(1)
+                            raw_args = m_rs.group(2) or ""
+                            end_l = self._find_brace_end_line(lines, look_idx)
+                            break
+                    block_t = "\n".join(lines[start_l - 1 : end_l])
+                    params = self._extract_polyglot_params(block_t, raw_args, r_path)
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_verb,
+                            path_pattern=r_path,
+                            regex_pattern=_normalize_route_pattern_to_regex(r_path),
+                            file_path=rel_path,
+                            func_name=fn_name,
+                            start_line=start_l,
+                            end_line=end_l,
+                            parameters=sorted(list(params)),
+                            called_funcs=[],
+                            auth_context="none",
+                            framework="rust",
+                        )
+                    )
+
+            # -----------------------------------------------------------------
+            # Tier 2 Universal Fallback (Kotlin, Scala, Swift, Elixir, C/C++, or custom routers)
+            # -----------------------------------------------------------------
+            if len(self.routes) == routes_before:
+                # Check Spring-style annotations (e.g. Kotlin @GetMapping) or Ktor/generic verb("/path")
+                if "@GetMapping" in content or "@PostMapping" in content or "@RequestMapping" in content:
+                    self._scan_java_files([(full_path, rel_path)])
+                else:
+                    univ_re = re.compile(
+                        r"""\b(GET|POST|PUT|DELETE|PATCH|get|post|put|delete|patch)\b[^\n"']*["'](/[a-zA-Z0-9_./:{}-]+)["']"""
+                    )
+                    for um in univ_re.finditer(content):
+                        http_verb = um.group(1).upper()
+                        r_path = self._join_prefixes("", um.group(2).strip()) or "/"
+                        start_l = content[: um.start()].count("\n") + 1
+                        end_l = self._find_brace_end_line(lines, start_l - 1)
+                        block_t = "\n".join(lines[start_l - 1 : end_l])
+                        params = self._extract_polyglot_params(block_t, "", r_path)
+                        self.routes.append(
+                            RouteEntry(
+                                method=http_verb,
+                                path_pattern=r_path,
+                                regex_pattern=_normalize_route_pattern_to_regex(r_path),
+                                file_path=rel_path,
+                                func_name=f"polyglot_{http_verb.lower()}_L{start_l}",
+                                start_line=start_l,
+                                end_line=end_l,
+                                parameters=sorted(list(params)),
+                                called_funcs=[],
+                                auth_context="none",
+                                framework=ext.lstrip(".") or "polyglot",
+                            )
+                        )
+
+    @staticmethod
+    def _find_brace_end_line(lines: List[str], start_idx: int) -> int:
+        brace_depth = 0
+        opened = False
+        for idx in range(start_idx, len(lines)):
+            line_s = lines[idx]
+            if "{" in line_s:
+                opened = True
+            brace_depth += line_s.count("{") - line_s.count("}")
+            if opened and brace_depth <= 0:
+                return idx + 1
+        return min(len(lines), start_idx + 25)
+
+    @staticmethod
+    def _find_ruby_end_line(lines: List[str], start_idx: int) -> int:
+        depth = 0
+        for idx in range(start_idx, len(lines)):
+            s = lines[idx].strip()
+            if not s or s.startswith("#"):
+                continue
+            if re.search(r"\b(?:def|do|class|module|if|case|begin)\b", s):
+                depth += 1
+            if re.search(r"\bend\b", s):
+                depth -= 1
+                if depth <= 0 and idx > start_idx:
+                    return idx + 1
+        return min(len(lines), start_idx + 25)
+
+    @staticmethod
+    def _extract_polyglot_params(block_text: str, raw_args: str, route_path: str) -> Set[str]:
+        params: Set[str] = set()
+        # Path variables: /orders/{id} or /orders/:id
+        for m in re.finditer(r"\{([a-zA-Z_]\w*)\}|:([a-zA-Z_]\w*)", route_path or ""):
+            params.add(m.group(1) or m.group(2))
+        # Go: c.Query("q"), c.DefaultQuery("q", ...), c.Param("id"), c.PostForm("cmd"), r.URL.Query().Get("q"), r.FormValue("q")
+        for m in re.finditer(
+            r"""\b(?:Query|DefaultQuery|Param|PostForm|FormValue|Get)\s*\(\s*["']([a-zA-Z_]\w*)["']""",
+            block_text,
+        ):
+            params.add(m.group(1))
+        # PHP: $_GET['q'], $_POST['cmd'], $_REQUEST['id'], $request->input('q'), $request->query('q')
+        for m in re.finditer(
+            r"""(?:\$_(?:GET|POST|REQUEST)\s*\[\s*["']([a-zA-Z_]\w*)["']\s*\]|->\s*(?:input|query|get|post|route)\s*\(\s*["']([a-zA-Z_]\w*)["'])""",
+            block_text,
+        ):
+            params.add(m.group(1) or m.group(2))
+        # Ruby: params[:q] or params['q']
+        for m in re.finditer(r"""\bparams\s*\[\s*(?::([a-zA-Z_]\w*)|["']([a-zA-Z_]\w*)["'])\s*\]""", block_text):
+            params.add(m.group(1) or m.group(2))
+        # C#: Request.Query["q"] or [FromQuery] string q / plain typed parameters
+        for m in re.finditer(r"""\bQuery\s*\[\s*["']([a-zA-Z_]\w*)["']\s*\]""", block_text):
+            params.add(m.group(1))
+        for m in re.finditer(r"""\[\s*From(?:Query|Route|Form|Header)\s*(?:\([^)]*\))?\s*\]\s*[\w<>\?]+\s+([a-zA-Z_]\w*)""", raw_args or ""):
+            params.add(m.group(1))
+        # Plain C# / Rust / Kotlin typed arguments (excluding framework context types)
+        for part in (raw_args or "").split(","):
+            clean_p = re.sub(r"\[[^\]]*\]", "", part).strip()
+            # C# style: string q, int id
+            m_cs_arg = re.match(r"^(?:string|int|long|bool|double|decimal|Guid)\??\s+([a-zA-Z_]\w*)$", clean_p, re.IGNORECASE)
+            if m_cs_arg:
+                params.add(m_cs_arg.group(1))
         return params
 
     # -------------------------------------------------------------------------

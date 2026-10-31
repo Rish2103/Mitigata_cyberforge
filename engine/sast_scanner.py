@@ -495,6 +495,10 @@ class SASTScanner:
             "target", "out", "bin", "gradle", ".gradle", ".mvn", ".git", ".idea",
             ".vscode", "vendor", "coverage", "logs", ".tox", ".mypy_cache", ".pytest_cache",
         }
+        polyglot_exts = (
+            ".go", ".php", ".cs", ".rb", ".kt", ".rs",
+            ".scala", ".swift", ".ex", ".exs", ".cpp", ".c", ".cc",
+        )
 
         if os.path.isfile(self.root_dir):
             fname = os.path.basename(self.root_dir)
@@ -504,6 +508,8 @@ class SASTScanner:
                 all_findings.extend(self._scan_js_file(self.root_dir, fname, reachable_files, active_mapper))
             elif fname.endswith(".java"):
                 all_findings.extend(self._scan_java_file(self.root_dir, fname, reachable_files, active_mapper))
+            elif fname.endswith(polyglot_exts):
+                all_findings.extend(self._scan_polyglot_file(self.root_dir, fname, reachable_files, active_mapper))
         else:
             for dirpath, dirnames, filenames in os.walk(self.root_dir):
                 # Prune build/artifact/vendor directories in-place so os.walk never descends into them
@@ -529,6 +535,9 @@ class SASTScanner:
                     elif fname.endswith(".java"):
                         java_findings = self._scan_java_file(full_path, rel_path, reachable_files, active_mapper)
                         all_findings.extend(java_findings)
+                    elif fname.endswith(polyglot_exts):
+                        poly_findings = self._scan_polyglot_file(full_path, rel_path, reachable_files, active_mapper)
+                        all_findings.extend(poly_findings)
 
         # Propagate HTTP parameter names across 3-hop helper call chains & intra-function aliases
         for _ in range(5):
@@ -1220,6 +1229,438 @@ class SASTScanner:
             return filtered
         except Exception:
             return []
+
+    # -------------------------------------------------------------------------
+    # Universal Polyglot SAST & B-2 Decoy Scanner (Go, PHP, C#/.NET, Ruby, Kotlin, Rust, C/C++)
+    # -------------------------------------------------------------------------
+    _POLYGLOT_ACTIVE_SINK_KEYWORDS: Tuple[str, ...] = (
+        # SQLi & Safe SQL Decoy markers
+        "SELECT ",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        ".Query(",
+        ".QueryRow(",
+        ".Exec(",
+        ".Raw(",
+        "mysqli_query",
+        "mysql_query",
+        "->query(",
+        "->prepare(",
+        "DB::select",
+        "DB::raw",
+        "FromSqlRaw",
+        "ExecuteSqlRaw",
+        "FromSqlInterpolated",
+        "SqlCommand",
+        "find_by_sql",
+        ".where(",
+        "sqlx::query",
+        # CMDi & Safe Process Decoy markers
+        "exec.Command(",
+        "shell_exec(",
+        "system(",
+        "passthru(",
+        "popen(",
+        "escapeshellarg(",
+        "escapeshellcmd(",
+        "Process.Start(",
+        "Command::new(",
+        "Open3.",
+        # XSS & Safe HTML Escape Decoy markers
+        "Fprintf(",
+        ".Write(",
+        "text/html",
+        "EscapeString(",
+        "HTMLEscapeString(",
+        "echo ",
+        "print ",
+        "htmlspecialchars(",
+        "htmlentities(",
+        "HtmlEncode(",
+        "HtmlEncoder",
+        "html_escape(",
+        "render inline:",
+        # Path Traversal & Safe Path Decoy markers
+        "os.ReadFile(",
+        "ioutil.ReadFile(",
+        "os.Open(",
+        ".File(",
+        "filepath.Clean(",
+        "filepath.Base(",
+        "file_get_contents(",
+        "readfile(",
+        "fopen(",
+        "basename(",
+        "realpath(",
+        "File.ReadAllText(",
+        "File.OpenRead(",
+        "Path.GetFileName(",
+        "File.read(",
+        "send_file(",
+        "read_to_string(",
+        # Open Redirect & Safe Redirect Decoy markers
+        "http.Redirect(",
+        ".Redirect(",
+        "Location:",
+        "RedirectPermanent(",
+        "LocalRedirect(",
+        "redirect_to ",
+        "Redirect::to(",
+    )
+
+    def _evaluate_polyglot_sink_line(
+        self,
+        line_s: str,
+        lineno: int,
+        rel_path: str,
+        get_context_window: Callable[[], str],
+        route_mapper: Optional[Any],
+        findings: List[CanonicalFinding],
+    ) -> None:
+        has_secret_kw = (
+            "=" in line_s
+            and ('"' in line_s or "'" in line_s)
+            and any(kw in line_s.lower() for kw in self._JAVA_SECRET_KEYWORDS)
+        )
+        has_sink_kw = any(kw in line_s for kw in self._POLYGLOT_ACTIVE_SINK_KEYWORDS)
+        if not has_secret_kw and not has_sink_kw:
+            return
+
+        fn_name: Optional[str] = None
+        if route_mapper is not None:
+            matched_routes = route_mapper.find_routes_for_finding(rel_path, lineno)
+            if matched_routes:
+                fn_name = matched_routes[0].func_name
+
+        # 1. CWE-798: Hardcoded Credentials / API Keys
+        if has_secret_kw:
+            sec_match = re.search(
+                r"""([a-zA-Z0-9_$]*(?:api[_-]?key|secret|password|passwd|jwt[_-]?secret|private[_-]?key|auth[_-]?token)[a-zA-Z0-9_]*)\s*(?::?=|=>)\s*["']([^"']{6,})["']""",
+                line_s,
+                re.IGNORECASE,
+            )
+            if sec_match and not any(env_k in line_s for env_k in ("getenv", "Getenv", "ENV[", "env::var", "Environment.")):
+                val = sec_match.group(2).strip()
+                if val.lower() not in ("changeme", "placeholder", "none", "null"):
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-798", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-798",
+                            cwe_name=CWE_NAMES.get("CWE-798"),
+                            severity=Severity.HIGH,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            code_snippet=line_s[:220],
+                            is_protected_decoy=False,
+                        )
+                    )
+
+        if not has_sink_kw:
+            return
+
+        context_window = get_context_window()
+        inferred_param = self._infer_polyglot_param(context_window, line_s)
+
+        if not inferred_param and route_mapper is not None:
+            for r in route_mapper.find_routes_for_finding(rel_path, lineno):
+                if r.parameters:
+                    inferred_param = r.parameters[0]
+                    break
+
+        def _add(
+            cwe: str,
+            sev: Severity,
+            rule: str,
+            is_decoy: bool = False,
+            reason: Optional[str] = None,
+        ) -> None:
+            fid = hashlib.sha256(f"sast:poly:{cwe}:{rel_path}:{lineno}:{rule}".encode()).hexdigest()[:12]
+            findings.append(
+                CanonicalFinding(
+                    id=f"SAST-{fid}",
+                    source=FindingSource.SAST,
+                    cwe=cwe,
+                    cwe_name=CWE_NAMES[cwe],
+                    severity=sev,
+                    file_path=rel_path,
+                    line=lineno,
+                    func_name=fn_name,
+                    param=inferred_param,
+                    code_snippet=line_s[:220],
+                    is_protected_decoy=is_decoy,
+                    decoy_reason=reason if is_decoy else None,
+                    raw_details={"rule": rule},
+                )
+            )
+
+        # ---------------------------------------------------------------------
+        # 2. CWE-89: SQL Injection & B-2 Parameterized SQL Safe Decoys
+        # ---------------------------------------------------------------------
+        has_sql_verb = bool(re.search(r"\b(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b", line_s, re.IGNORECASE))
+        is_sql_api = any(
+            k in line_s
+            for k in (
+                ".Query(", ".QueryRow(", ".Exec(", ".Raw(",
+                "mysqli_query", "mysql_query", "->query(", "->prepare(",
+                "DB::select", "DB::raw", "FromSqlRaw", "ExecuteSqlRaw",
+                "FromSqlInterpolated", "SqlCommand", "find_by_sql", ".where(", "sqlx::query",
+            )
+        )
+        if has_sql_verb or is_sql_api:
+            # Check B-2 Safe Decoys first
+            if (
+                "->prepare(" in line_s
+                or "FromSqlInterpolated(" in line_s
+                or (
+                    re.search(r"(?:\?|\$\d+|:[a-zA-Z_]\w*)", line_s)
+                    and "+" not in line_s
+                    and "Sprintf" not in line_s
+                    and "format!" not in line_s
+                    and '#{' not in line_s
+                    and '$"' not in line_s
+                )
+            ):
+                _add(
+                    "CWE-89",
+                    Severity.CRITICAL,
+                    "polyglot_parameterized_sql_decoy",
+                    is_decoy=True,
+                    reason="Protected by parameterized SQL query / prepared statement placeholders (? / $1)",
+                )
+            elif (
+                "+" in line_s
+                or "Sprintf(" in line_s
+                or "format!(" in line_s
+                or '#{' in line_s
+                or '$"' in line_s
+                or ("." in line_s and "$" in line_s)
+                or re.search(r'"[^"]*\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^"]*\$[a-zA-Z_]', line_s, re.IGNORECASE)
+                or any(k in line_s for k in ("FromSqlRaw(", "ExecuteSqlRaw(", "DB::raw(", "find_by_sql("))
+            ):
+                _add("CWE-89", Severity.CRITICAL, "polyglot_raw_sql_concat")
+
+        # ---------------------------------------------------------------------
+        # 3. CWE-78: OS Command Injection & B-2 Safe Process Argument Array Decoys
+        # ---------------------------------------------------------------------
+        if "exec.Command(" in line_s or "Command::new(" in line_s:
+            if any(sh in line_s for sh in ('"sh"', '"bash"', '"/bin/sh"', '"/bin/bash"', '"cmd"', '"cmd.exe"', '"+', "+")):
+                _add("CWE-78", Severity.CRITICAL, "polyglot_shell_command_exec")
+            else:
+                _add(
+                    "CWE-78",
+                    Severity.CRITICAL,
+                    "polyglot_safe_exec_command_decoy",
+                    is_decoy=True,
+                    reason="Protected by direct OS argument array execution without shell interpreter (sh -c)",
+                )
+        elif any(k in line_s for k in ("shell_exec(", "system(", "passthru(", "popen(", "Process.Start(", "Open3.")):
+            if "escapeshellarg(" in line_s or "escapeshellcmd(" in line_s or "UseShellExecute = false" in context_window:
+                _add(
+                    "CWE-78",
+                    Severity.CRITICAL,
+                    "polyglot_escaped_shell_decoy",
+                    is_decoy=True,
+                    reason="Protected by shell argument escaping (escapeshellarg) or UseShellExecute=false",
+                )
+            else:
+                _add("CWE-78", Severity.CRITICAL, "polyglot_os_command_injection")
+
+        # ---------------------------------------------------------------------
+        # 4. CWE-79: Cross-Site Scripting (XSS) & B-2 HTML Encoding Decoys
+        # ---------------------------------------------------------------------
+        if any(
+            k in line_s
+            for k in (
+                "EscapeString(", "HTMLEscapeString(", "htmlspecialchars(",
+                "htmlentities(", "HtmlEncode(", "HtmlEncoder", "html_escape(",
+            )
+        ):
+            _add(
+                "CWE-79",
+                Severity.HIGH,
+                "polyglot_html_escape_decoy",
+                is_decoy=True,
+                reason="Protected by context-aware HTML entity encoding (EscapeString / htmlspecialchars / HtmlEncode)",
+            )
+        elif (
+            ("Fprintf(" in line_s or ".Write(" in line_s or "text/html" in line_s or "echo " in line_s or "print " in line_s or "render inline:" in line_s)
+            and ("<" in line_s and ">" in line_s)
+            and any(t in line_s for t in ("+", "$", "%s", "%v", "#{", "{"))
+        ):
+            _add("CWE-79", Severity.HIGH, "polyglot_reflected_xss")
+
+        # ---------------------------------------------------------------------
+        # 5. CWE-22: Path Traversal & B-2 Path Normalization Decoys
+        # ---------------------------------------------------------------------
+        if any(k in line_s for k in ("filepath.Base(", "basename(", "Path.GetFileName(")) or (
+            ("filepath.Clean(" in context_window and "HasPrefix(" in context_window)
+            or ("realpath(" in context_window and "strpos(" in context_window)
+        ):
+            if any(
+                k in line_s
+                for k in (
+                    "filepath.Base(", "basename(", "Path.GetFileName(",
+                    "os.ReadFile(", "ioutil.ReadFile(", "os.Open(", "file_get_contents(",
+                    "File.ReadAllText(", "File.read(", "send_file(",
+                )
+            ):
+                _add(
+                    "CWE-22",
+                    Severity.HIGH,
+                    "polyglot_safe_path_decoy",
+                    is_decoy=True,
+                    reason="Protected by basename extraction or canonical path prefix validation",
+                )
+        elif any(
+            k in line_s
+            for k in (
+                "os.ReadFile(", "ioutil.ReadFile(", "os.Open(", ".File(",
+                "file_get_contents(", "readfile(", "fopen(",
+                "File.ReadAllText(", "File.OpenRead(", "File.read(", "send_file(", "read_to_string(",
+            )
+        ):
+            _add("CWE-22", Severity.HIGH, "polyglot_path_traversal")
+
+        # ---------------------------------------------------------------------
+        # 6. CWE-601: Open Redirect & B-2 LocalRedirect Decoy
+        # ---------------------------------------------------------------------
+        if "LocalRedirect(" in line_s:
+            _add(
+                "CWE-601",
+                Severity.MEDIUM,
+                "polyglot_local_redirect_decoy",
+                is_decoy=True,
+                reason="Protected by ASP.NET Core LocalRedirect() host validation",
+            )
+        elif (
+            "http.Redirect(" in line_s
+            or ".Redirect(" in line_s
+            or "RedirectPermanent(" in line_s
+            or "redirect_to " in line_s
+            or "Redirect::to(" in line_s
+            or ("Location:" in line_s and ("$" in line_s or "." in line_s or "+" in line_s))
+        ):
+            _add("CWE-601", Severity.MEDIUM, "polyglot_open_redirect")
+
+    def _scan_polyglot_file(
+        self,
+        full_path: str,
+        rel_path: str,
+        reachable_files: Optional[Set[str]],
+        route_mapper: Optional[Any] = None,
+    ) -> List[CanonicalFinding]:
+        findings: List[CanonicalFinding] = []
+        max_in_memory_bytes = 2 * 1024 * 1024  # 2 MB threshold; stream larger files in O(1) RAM
+        try:
+            file_size = os.path.getsize(full_path)
+            if file_size > max_in_memory_bytes:
+                window: deque[Tuple[int, str]] = deque(maxlen=14)
+                pending_eval: deque[Tuple[int, str]] = deque()
+                with open(full_path, "r", encoding="utf-8", errors="ignore", buffering=8 * 1024 * 1024) as f:
+                    for idx, raw_line in enumerate(f):
+                        lineno = idx + 1
+                        clean_line = raw_line.rstrip("\r\n")
+                        window.append((lineno, clean_line))
+                        pending_eval.append((lineno, clean_line))
+                        if len(pending_eval) > 5:
+                            target_lineno, target_raw = pending_eval.popleft()
+                            line_s = target_raw.strip()
+                            if line_s and not line_s.startswith(("//", "#", "/*", "*")):
+                                self._evaluate_polyglot_sink_line(
+                                    line_s=line_s,
+                                    lineno=target_lineno,
+                                    rel_path=rel_path,
+                                    get_context_window=lambda: "\n".join(ln for _, ln in window),
+                                    route_mapper=route_mapper,
+                                    findings=findings,
+                                )
+                    while pending_eval:
+                        target_lineno, target_raw = pending_eval.popleft()
+                        line_s = target_raw.strip()
+                        if line_s and not line_s.startswith(("//", "#", "/*", "*")):
+                            self._evaluate_polyglot_sink_line(
+                                line_s=line_s,
+                                lineno=target_lineno,
+                                rel_path=rel_path,
+                                get_context_window=lambda: "\n".join(ln for _, ln in window),
+                                route_mapper=route_mapper,
+                                findings=findings,
+                            )
+            else:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                lines = content.splitlines()
+
+                for idx, raw_line in enumerate(lines):
+                    lineno = idx + 1
+                    line_s = raw_line.strip()
+                    if not line_s or line_s.startswith(("//", "#", "/*", "*")):
+                        continue
+
+                    self._evaluate_polyglot_sink_line(
+                        line_s=line_s,
+                        lineno=lineno,
+                        rel_path=rel_path,
+                        get_context_window=lambda i=idx: "\n".join(lines[max(0, i - 8) : min(len(lines), i + 5)]),
+                        route_mapper=route_mapper,
+                        findings=findings,
+                    )
+
+            filtered: List[CanonicalFinding] = []
+            for f in findings:
+                checked = DecoyFilter.filter_finding(
+                    f,
+                    enclosing_snippet=f.code_snippet or "",
+                    reachable_files=reachable_files,
+                    route_mapper=route_mapper,
+                )
+                filtered.append(checked)
+            return filtered
+        except Exception:
+            return []
+
+    @staticmethod
+    def _infer_polyglot_param(context_window: str, line_s: str) -> Optional[str]:
+        # 1. Go: c.Query("q"), c.Param("id"), c.PostForm("cmd"), r.URL.Query().Get("q"), r.FormValue("q")
+        m_go = re.search(
+            r"""\b(?:Query|DefaultQuery|Param|PostForm|FormValue|Get)\s*\(\s*["']([a-zA-Z_]\w*)["']""",
+            context_window,
+        )
+        if m_go:
+            return m_go.group(1)
+
+        # 2. PHP: $_GET['q'], $_POST['cmd'], $_REQUEST['id'], $request->input('q'), $request->query('q')
+        m_php = re.search(
+            r"""(?:\$_(?:GET|POST|REQUEST)\s*\[\s*["']([a-zA-Z_]\w*)["']\s*\]|->\s*(?:input|query|get|post|route)\s*\(\s*["']([a-zA-Z_]\w*)["'])""",
+            context_window,
+        )
+        if m_php:
+            return m_php.group(1) or m_php.group(2)
+
+        # 3. Ruby: params[:q] or params['q']
+        m_rb = re.search(r"""\bparams\s*\[\s*(?::([a-zA-Z_]\w*)|["']([a-zA-Z_]\w*)["'])\s*\]""", context_window)
+        if m_rb:
+            return m_rb.group(1) or m_rb.group(2)
+
+        # 4. C#: [FromQuery] string q or Request.Query["q"]
+        m_cs = re.search(r"""\bQuery\s*\[\s*["']([a-zA-Z_]\w*)["']\s*\]""", context_window)
+        if m_cs:
+            return m_cs.group(1)
+        m_cs_attr = re.search(
+            r"""\[\s*From(?:Query|Route|Form|Header)\s*(?:\([^)]*\))?\s*\]\s*[\w<>\?]+\s+([a-zA-Z_]\w*)""",
+            context_window,
+        )
+        if m_cs_attr:
+            return m_cs_attr.group(1)
+
+        # 5. Concatenated variable on sink line: + q or .$q or #{q} or {q}
+        m_cat = re.search(r"(?:\+\s*|\.\s*\$|\#\{|\{)\s*([a-zA-Z_]\w*)", line_s)
+        if m_cat and m_cat.group(1) not in ("fmt", "os", "http", "err", "req", "res", "c", "w", "r", "db"):
+            return m_cat.group(1)
+        return None
 
     # -------------------------------------------------------------------------
     # FR-3 External SAST Report Normalizers (SARIF v2.1.0, Bandit, Semgrep)

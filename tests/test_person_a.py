@@ -1437,6 +1437,181 @@ public class HugeEnterpriseController {
         self.assertEqual(by_pkg["spring-webmvc"].status, SCAReachabilityStatus.UNKNOWN)
         self.assertEqual(by_pkg["spring-webmvc"].effective_severity, Severity.CRITICAL)
 
+    def test_phase6_universal_polyglot_go_php_csharp_ruby_rust_and_sca(self):
+        """
+        Phase-6: Verifies the 2-Tier Universal Polyglot Engine across Go (.go), PHP (.php),
+        C# (.cs), Ruby (.rb), and Rust (.rs) for RouteMapper, SAST (all 6 CWEs),
+        B-2 Safe Decoys, SAST+DAST Correlation (`Confirmed`), and `go.mod` / `composer.json` SCA.
+        """
+        # 1. Go (Gin) file with vulnerable SQLi, JWT usage, hardcoded secret, and B-2 Safe Decoy
+        go_code = '''package main
+
+import (
+    "database/sql"
+    "github.com/gin-gonic/gin"
+    "github.com/dgrijalva/jwt-go"
+)
+
+const jwtSecret = "SUPER_SECRET_PROD_GO_JWT_KEY_9999"
+
+func setupRouter(r *gin.Engine, db *sql.DB) {
+    r.GET("/api/v1/orders/search", searchOrders)
+    r.GET("/api/v1/orders/safe", safeOrders)
+}
+
+func searchOrders(c *gin.Context, db *sql.DB) {
+    id := c.Query("id")
+    token := c.Query("token")
+    jwt.Parse(token, nil)
+    db.Query("SELECT * FROM orders WHERE id = '" + id + "'")
+}
+
+func safeOrders(c *gin.Context, db *sql.DB) {
+    id := c.Query("id")
+    db.Query("SELECT * FROM orders WHERE id = ?", id)
+}
+'''
+        with open(os.path.join(self.test_dir, "orders.go"), "w", encoding="utf-8") as f:
+            f.write(go_code)
+
+        # 2. PHP (Laravel) file with vulnerable Command Injection and B-2 Safe PDO Prepared Statement
+        php_code = '''<?php
+use Illuminate\\Support\\Facades\\Route;
+use GuzzleHttp\\Client;
+
+Route::post('/api/v1/billing/exec', [BillingController::class, 'runCmd']);
+
+class BillingController {
+    public function runCmd($request, $pdo) {
+        $host = $_POST['host'];
+        shell_exec("ping -c 1 " . $host);
+        $stmt = $pdo->prepare("SELECT * FROM invoices WHERE host = ?");
+        $stmt->execute([$host]);
+    }
+}
+?>
+'''
+        with open(os.path.join(self.test_dir, "billing.php"), "w", encoding="utf-8") as f:
+            f.write(php_code)
+
+        # 3. C# (ASP.NET Core) controller with CWE-22 Path Traversal and B-2 Safe Decoy
+        cs_code = '''using Microsoft.AspNetCore.Mvc;
+using System.IO;
+
+[ApiController]
+[Route("api/v1/[controller]")]
+public class FilesController : ControllerBase {
+    [HttpGet("download")]
+    public IActionResult Download([FromQuery] string file) {
+        var content = File.ReadAllText("/var/data/" + file);
+        var safeName = Path.GetFileName(file);
+        return Ok(content);
+    }
+}
+'''
+        with open(os.path.join(self.test_dir, "FilesController.cs"), "w", encoding="utf-8") as f:
+            f.write(cs_code)
+
+        # 4. Ruby (Sinatra) route with CWE-601 Open Redirect & Rust (Actix) route with CWE-78
+        rb_code = '''require 'sinatra'
+
+get '/api/v1/auth/bounce' do
+  target = params[:next]
+  redirect_to params[:next]
+end
+'''
+        with open(os.path.join(self.test_dir, "app.rb"), "w", encoding="utf-8") as f:
+            f.write(rb_code)
+
+        rs_code = '''use actix_web::{get, web, HttpResponse};
+use std::process::Command;
+
+#[get("/api/v1/rust/diag")]
+async fn run_diag(cmd: web::Query<String>) -> HttpResponse {
+    Command::new("sh").arg("-c").arg(format!("ping {}", cmd)).output();
+    HttpResponse::Ok().finish()
+}
+'''
+        with open(os.path.join(self.test_dir, "diag.rs"), "w", encoding="utf-8") as f:
+            f.write(rs_code)
+
+        # 5. Go module manifest (`go.mod`) for Reachability-Aware SCA
+        go_mod = '''module github.com/mitigata/polyglot-demo
+
+go 1.21
+
+require (
+    github.com/dgrijalva/jwt-go v3.2.0
+    github.com/gin-gonic/gin v1.9.0
+)
+'''
+        with open(os.path.join(self.test_dir, "go.mod"), "w", encoding="utf-8") as f:
+            f.write(go_mod)
+
+        # Verify RouteMapper discovers Go, PHP, C#, Ruby, and Rust routes
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        route_set = {(r.method, r.path_pattern) for r in routes}
+        self.assertIn(("GET", "/api/v1/orders/search"), route_set)
+        self.assertIn(("GET", "/api/v1/orders/safe"), route_set)
+        self.assertIn(("POST", "/api/v1/billing/exec"), route_set)
+        self.assertIn(("GET", "/api/v1/files/download"), route_set)
+        self.assertIn(("GET", "/api/v1/auth/bounce"), route_set)
+        self.assertIn(("GET", "/api/v1/rust/diag"), route_set)
+
+        # Verify SASTScanner detects polyglot CWEs and B-2 Safe Decoys
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        active = [f for f in sast_findings if not f.is_protected_decoy]
+        decoys = [f for f in sast_findings if f.is_protected_decoy]
+        self.assertGreaterEqual(len(decoys), 2)
+
+        active_cwes = {f.cwe for f in active}
+        self.assertIn("CWE-89", active_cwes)
+        self.assertIn("CWE-78", active_cwes)
+        self.assertIn("CWE-22", active_cwes)
+        self.assertIn("CWE-601", active_cwes)
+        self.assertIn("CWE-798", active_cwes)
+
+        # Verify SAST + DAST Correlation confirms Go SQLi and PHP Command Injection
+        dast_findings = [
+            CanonicalFinding(
+                id="dast_go_sqli",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://localhost:8080/api/v1/orders/search?id=1'",
+                method="GET",
+                param="id",
+                payload="1' OR '1'='1",
+            ),
+            CanonicalFinding(
+                id="dast_php_cmdi",
+                source=FindingSource.DAST,
+                cwe="CWE-78",
+                severity=Severity.CRITICAL,
+                url="http://localhost:8080/api/v1/billing/exec",
+                method="POST",
+                param="host",
+                payload="127.0.0.1; id",
+            ),
+        ]
+        correlator = Correlator(mapper)
+        correlated = correlator.correlate(sast_findings, dast_findings)
+        confirmed = [i for i in correlated if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 2)
+
+        # Verify Go (`go.mod`) 5-Step Reachability-Aware SCA
+        from engine.sca_reachability import SCAReachabilityEngine, SCAReachabilityStatus
+
+        sca_engine = SCAReachabilityEngine(self.test_dir, route_mapper=mapper)
+        sca_report = sca_engine.analyze_reachability()
+        by_pkg = {f.package: f for f in sca_report.findings}
+        self.assertIn("github.com/dgrijalva/jwt-go", by_pkg)
+        self.assertEqual(by_pkg["github.com/dgrijalva/jwt-go"].status, SCAReachabilityStatus.REACHABLE)
+        self.assertIn("github.com/gin-gonic/gin", by_pkg)
+        self.assertEqual(by_pkg["github.com/gin-gonic/gin"].status, SCAReachabilityStatus.IMPORTED_ONLY)
+
 
 if __name__ == "__main__":
     unittest.main()
