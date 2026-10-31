@@ -34,10 +34,22 @@ def _normalize_route_pattern_to_regex(pattern: str) -> str:
         clean_no_trail = "/"
 
     # Replace Flask converter patterns <converter:name> or <name>
-    # e.g. <int:id> -> (?P<id>[^/]+)
-    regex = re.sub(r'<(?:\w+:)?(\w+)>', r'(?P<\1>[^/]+)', clean_no_trail)
-    # Replace FastAPI style {param} -> (?P<param>[^/]+)
-    regex = re.sub(r'\{(\w+)\}', r'(?P<\1>[^/]+)', regex)
+    # e.g. <path:subpath> -> (?P<subpath>.*), <int:id> -> (?P<id>[^/]+), <id> -> (?P<id>[^/]+)
+    def _flask_param(match):
+        conv, name = match.group(1), match.group(2)
+        if conv == "path":
+            return f"(?P<{name}>.*)"
+        return f"(?P<{name}>[^/]+)"
+    regex = re.sub(r'<(?:(\w+):)?(\w+)>', _flask_param, clean_no_trail)
+
+    # Replace FastAPI style {param} or {param:path} or {param:int}
+    def _fastapi_param(match):
+        name = match.group(1)
+        conv = match.group(2) if match.group(2) else ""
+        if conv == "path":
+            return f"(?P<{name}>.*)"
+        return f"(?P<{name}>[^/]+)"
+    regex = re.sub(r'\{(\w+)(?::(\w+))?\}', _fastapi_param, regex)
 
     # Allow optional trailing slash
     return f"^{regex}/?$"

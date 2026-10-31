@@ -131,9 +131,7 @@ class Correlator:
             # Find candidate SAST finding:
             # VETO 1: CWE must match exactly (e.g. CWE-89 matches CWE-89)
             # VETO 2: Code location (file + line) must be inside the route handler or its called helpers
-            best_sast: Optional[CanonicalFinding] = None
-            best_link_reason: str = ""
-
+            candidates = []
             for s in active_sast:
                 if s.id in matched_sast_ids:
                     continue
@@ -144,10 +142,16 @@ class Correlator:
                 # Check if SAST sink is inside this route handler or helper
                 if s.file_path and s.line:
                     if self.route_mapper.is_line_in_route(s.file_path, s.line, dast_route):
-                        # VETO 3 (Parameter Alignment): If DAST tested a specific param, check if handler references it
+                        # Calculate match score based on parameter alignment
+                        score = 10  # base match for route + CWE
                         param_match_note = ""
-                        if d.param and dast_route.parameters:
-                            if d.param.lower() in [p.lower() for p in dast_route.parameters]:
+                        if d.param:
+                            # Highest preference: snippet directly contains the param name
+                            if s.code_snippet and d.param.lower() in s.code_snippet.lower():
+                                score += 20
+                                param_match_note = f" + Parameter '{d.param}' verified in sink call"
+                            elif dast_route.parameters and d.param.lower() in [p.lower() for p in dast_route.parameters]:
+                                score += 10
                                 param_match_note = f" + Parameter '{d.param}' verified in handler"
 
                         link_reason = (
@@ -155,9 +159,14 @@ class Correlator:
                             f"handled by {dast_route.func_name}() lines {dast_route.start_line}-{dast_route.end_line} "
                             f"calling sink at {s.file_path}:{s.line}{param_match_note}"
                         )
-                        best_sast = s
-                        best_link_reason = link_reason
-                        break  # Found high-confidence deterministic link
+                        candidates.append((score, s, link_reason))
+
+            best_sast = None
+            best_link_reason = ""
+            if candidates:
+                # Pick the highest-scoring candidate (stable sort preserving order for ties)
+                candidates.sort(key=lambda c: c[0], reverse=True)
+                _, best_sast, best_link_reason = candidates[0]
 
             if best_sast:
                 # Mark as matched

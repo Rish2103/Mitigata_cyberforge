@@ -362,6 +362,108 @@ def unused_dead_function(param):
         self.assertTrue(all(f.is_protected_decoy for f in dead_findings))
         self.assertIn("Unreachable dead code", dead_findings[0].decoy_reason)
 
+    def test_static_sql_not_flagged(self):
+        """
+        Verify that benign static SQL executions (e.g. conn.execute('SELECT 1'))
+        are NOT flagged as vulnerabilities or false alarms.
+        """
+        code = '''
+import sqlite3
+def check_health():
+    conn = sqlite3.connect("health.db")
+    conn.execute("SELECT 1")
+    conn.execute("SELECT id, name FROM users")
+'''
+        with open(os.path.join(self.test_dir, "health.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+
+        scanner = SASTScanner(self.test_dir)
+        findings = scanner.scan()
+        # There should be 0 findings (no false positives for plain static queries)
+        self.assertEqual(len(findings), 0)
+
+    def test_fastapi_and_flask_path_converters(self):
+        """
+        Verify that path converters like <path:file_path> or {item_path:path}
+        and typed parameters like {item_id:int} match multi-segment paths correctly.
+        """
+        code = '''
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/files/{file_path:path}")
+def read_file(file_path: str):
+    return file_path
+
+@app.get("/items/{item_id:int}")
+def read_item(item_id: int):
+    return item_id
+'''
+        with open(os.path.join(self.test_dir, "fastapi_app.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+
+        mapper = RouteMapper(self.test_dir)
+        mapper.scan()
+
+        route_files = mapper.match_url("GET", "/files/docs/2026/report.pdf")
+        self.assertIsNotNone(route_files)
+        self.assertEqual(route_files.func_name, "read_file")
+
+        route_item = mapper.match_url("GET", "/items/12345")
+        self.assertIsNotNone(route_item)
+        self.assertEqual(route_item.func_name, "read_item")
+
+    def test_parameter_weighting_in_correlator(self):
+        """
+        When a route handler contains multiple sinks of the same CWE,
+        the correlator should prioritize linking the sink whose code matches DAST parameter.
+        """
+        code = '''
+from flask import Flask, request
+import sqlite3
+
+app = Flask(__name__)
+
+@app.route("/multi_search", methods=["GET"])
+def multi_search():
+    user = request.args.get("user")
+    role = request.args.get("role")
+    conn = sqlite3.connect("db.sqlite")
+    conn.execute(f"SELECT * FROM users WHERE username = '{user}'")
+    conn.execute(f"SELECT * FROM roles WHERE role_name = '{role}'")
+    return "ok"
+'''
+        with open(os.path.join(self.test_dir, "multi.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+
+        mapper = RouteMapper(self.test_dir)
+        mapper.scan()
+
+        scanner = SASTScanner(self.test_dir)
+        sast_findings = scanner.scan()
+        self.assertEqual(len(sast_findings), 2)
+
+        # DAST finding specifically targeting the 'role' parameter
+        dast_role = CanonicalFinding(
+            id="dast_role_1",
+            source=FindingSource.DAST,
+            cwe="CWE-89",
+            severity=Severity.CRITICAL,
+            url="/multi_search",
+            method="GET",
+            param="role",
+            payload="' OR '1'='1",
+        )
+
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast_findings, [dast_role])
+
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 1)
+        self.assertIn("role", confirmed[0].code_snippet)
+        self.assertIn("role_name", confirmed[0].code_snippet)
+        self.assertIn("verified in sink call", confirmed[0].link_reason)
+
 
 if __name__ == "__main__":
     unittest.main()

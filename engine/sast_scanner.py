@@ -74,7 +74,8 @@ class SASTVisitor(ast.NodeVisitor):
                 # For AST, check if query_arg is a Name or dynamic string
                 is_safe, reason = DecoyFilter.is_safe_sql_query(node)
 
-                if is_dynamic or is_safe or not is_safe:
+                # Report as a finding if dynamic (vulnerability) or if is_safe (protected decoy)
+                if is_dynamic or is_safe:
                     finding = CanonicalFinding(
                         id=_fingerprint_sast("CWE-89", self.rel_path, node.lineno),
                         source=FindingSource.SAST,
@@ -102,7 +103,7 @@ class SASTVisitor(ast.NodeVisitor):
                 is_safe, reason = DecoyFilter.is_safe_subprocess(node)
                 is_dynamic = self._is_dynamic_string(cmd_arg) or isinstance(cmd_arg, (ast.Name, ast.Call))
 
-                if is_dynamic or is_safe or not is_safe:
+                if is_dynamic or is_safe:
                     finding = CanonicalFinding(
                         id=_fingerprint_sast("CWE-78", self.rel_path, node.lineno),
                         source=FindingSource.SAST,
