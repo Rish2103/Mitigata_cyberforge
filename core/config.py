@@ -185,7 +185,7 @@ def is_safe_target_url(url: str) -> bool:
         # Check IP address (allow loopback, private RFC1918/Docker bridge, unspecified; block public IPs)
         try:
             ip = ipaddress.ip_address(hostname)
-            return bool(ip.is_loopback or ip.is_private or ip.is_unspecified)
+            return bool(ip.is_loopback or ip.is_unspecified or ip in ipaddress.ip_network("172.16.0.0/12"))
         except ValueError:
             pass
         # Allow single-label local Docker Compose service names (e.g. "test-app", "shop", "web")

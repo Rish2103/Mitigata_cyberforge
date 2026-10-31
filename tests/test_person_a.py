@@ -34,10 +34,13 @@ class TestPersonACore(unittest.TestCase):
         self.assertTrue(is_safe_target_url("http://localhost:5000/api/orders"))
         self.assertTrue(is_safe_target_url("http://127.0.0.1:8000/orders"))
         self.assertTrue(is_safe_target_url("http://testserver/"))
-        # Must refuse public internet domains
+        # Must refuse public internet domains and non-loopback LAN IPs (e.g. 192.168.60.139)
         self.assertFalse(is_safe_target_url("https://google.com/"))
         self.assertFalse(is_safe_target_url("https://mitigata.com/"))
         self.assertFalse(is_safe_target_url("https://attacker.com/evil"))
+        self.assertFalse(is_safe_target_url("http://192.168.60.139/"))
+        self.assertFalse(is_safe_target_url("http://192.168.60.139:8080/api"))
+        self.assertFalse(is_safe_target_url("http://10.0.0.42:5000/"))
 
     def test_route_mapper_flask_and_fastapi(self):
         """Verify FR-4 route extraction for Flask & FastAPI syntax."""
@@ -959,6 +962,296 @@ def invoke_dynamic(loader_name, payload):
         self.assertIn("/api/java/orders/search", confirmed[0].matched_route)
         self.assertIn("searchOrders()", confirmed[0].matched_route)
         self.assertEqual(confirmed[0].param, "q")
+
+    def test_phase4_unseen_django_include_prefixes_re_path_and_cbv_correlation(self):
+        """
+        Phase 4 (Task A4.1 - Unseen Django App Torture Test):
+        Verifies multi-file Django urlpatterns with include('billing.urls'),
+        urlpatterns += [...], re_path named regex groups, class-based View.as_view(),
+        cross-file helper SQLi/CMDi correlation, and ORM .filter() decoy suppression.
+        """
+        os.makedirs(os.path.join(self.test_dir, "billing"), exist_ok=True)
+        root_urls = '''
+from django.urls import path, include
+
+urlpatterns = [
+    path("api/v1/billing/", include("billing.urls")),
+]
+'''
+        billing_urls = '''
+from django.urls import path, re_path
+from billing import views
+
+urlpatterns = [
+    path("invoices/<int:invoice_id>/", views.get_invoice),
+]
+
+urlpatterns += [
+    re_path(r"^export/(?P<fmt>\\w+)/$", views.InvoiceExportView.as_view()),
+]
+'''
+        billing_views = '''
+from django.views import View
+from billing.db import query_invoice_raw, run_export_tool
+
+def get_invoice(request, invoice_id):
+    sort = request.GET.get("sort", "created_at")
+    # B-2 Safe Decoys: Django ORM filter() + parameterized raw()
+    InvoiceModel.objects.filter(id=invoice_id)
+    InvoiceModel.objects.raw("SELECT * FROM invoices WHERE id = %s", [invoice_id])
+    return query_invoice_raw(invoice_id, sort)
+
+class InvoiceExportView(View):
+    def post(self, request, fmt):
+        flag = request.POST.get("flag", "--csv")
+        return run_export_tool(fmt, flag)
+'''
+        billing_db = '''
+import sqlite3
+import subprocess
+
+def query_invoice_raw(invoice_id, sort):
+    conn = sqlite3.connect("billing.db")
+    # Real CWE-89 SQLi in 1-hop helper
+    return conn.execute(f"SELECT * FROM invoices WHERE id = {invoice_id} ORDER BY {sort}")
+
+def run_export_tool(fmt, flag):
+    # Real CWE-78 CMDi in 1-hop helper
+    return subprocess.check_output(f"invoice-cli --format {fmt} {flag}", shell=True)
+'''
+        with open(os.path.join(self.test_dir, "urls.py"), "w", encoding="utf-8") as f:
+            f.write(root_urls)
+        with open(os.path.join(self.test_dir, "billing", "urls.py"), "w", encoding="utf-8") as f:
+            f.write(billing_urls)
+        with open(os.path.join(self.test_dir, "billing", "views.py"), "w", encoding="utf-8") as f:
+            f.write(billing_views)
+        with open(os.path.join(self.test_dir, "billing", "db.py"), "w", encoding="utf-8") as f:
+            f.write(billing_db)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+
+        # Verify included prefix '/api/v1/billing' propagated to both path() and re_path()
+        m_inv = mapper.match_url("GET", "/api/v1/billing/invoices/42/")
+        self.assertIsNotNone(m_inv)
+        self.assertEqual(m_inv.func_name, "get_invoice")
+        self.assertIn("invoice_id", m_inv.parameters)
+        self.assertIn("sort", m_inv.parameters)
+
+        m_exp = mapper.match_url("POST", "/api/v1/billing/export/pdf/")
+        self.assertIsNotNone(m_exp)
+        self.assertEqual(m_exp.func_name, "InvoiceExportView.post")
+        self.assertIn("fmt", m_exp.parameters)
+        self.assertIn("flag", m_exp.parameters)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        decoys = [f for f in sast_findings if f.is_protected_decoy]
+        self.assertGreaterEqual(len(decoys), 1)
+
+        dast_findings = [
+            CanonicalFinding(
+                id="dast_django_sqli",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://127.0.0.1:8000/api/v1/billing/invoices/42/?sort=id",
+                method="GET",
+                param="sort",
+                payload="id; DROP TABLE invoices--",
+                evidence="sqlite3.OperationalError",
+            ),
+            CanonicalFinding(
+                id="dast_django_cmdi",
+                source=FindingSource.DAST,
+                cwe="CWE-78",
+                severity=Severity.CRITICAL,
+                url="http://127.0.0.1:8000/api/v1/billing/export/pdf/",
+                method="POST",
+                param="flag",
+                payload="; id",
+                evidence="uid=0(root)",
+            ),
+        ]
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast_findings, dast_findings)
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 2)
+        confirmed_cwes = {i.cwe for i in confirmed}
+        self.assertEqual(confirmed_cwes, {"CWE-89", "CWE-78"})
+
+    def test_phase4_unseen_express_cross_file_router_mount_and_3hop_correlation(self):
+        """
+        Phase 4 (Task A4.1 - Unseen Express.js Cross-File Router Torture Test):
+        Verifies app.use('/api/v2/orders', ordersRouter) where ordersRouter is required
+        from './routes/orders', calling a 2-hop service helper in './services/orderService.js'.
+        """
+        os.makedirs(os.path.join(self.test_dir, "routes"), exist_ok=True)
+        os.makedirs(os.path.join(self.test_dir, "services"), exist_ok=True)
+
+        app_js = '''
+const express = require('express');
+const app = express();
+const ordersRouter = require('./routes/orders');
+
+app.use('/api/v2/orders', ordersRouter);
+'''
+        orders_js = '''
+const express = require('express');
+const router = express.Router();
+const orderService = require('../services/orderService');
+
+router.get('/lookup/:orderId', (req, res) => {
+    const filter = req.query.filter;
+    // B-2 Safe Decoy: parameterized SQL with $1
+    db.query("SELECT * FROM orders WHERE id = $1", [req.params.orderId]);
+    const rows = orderService.fetchOrderUnsafe(req.params.orderId, filter);
+    res.json(rows);
+});
+
+module.exports = router;
+'''
+        service_js = '''
+const child_process = require('child_process');
+
+function fetchOrderUnsafe(orderId, filter) {
+    return runRawSql(orderId, filter);
+}
+
+function runRawSql(orderId, filter) {
+    return db.query(`SELECT * FROM orders WHERE id = ${orderId} AND status = '${filter}'`);
+}
+
+module.exports = { fetchOrderUnsafe, runRawSql };
+'''
+        with open(os.path.join(self.test_dir, "app.js"), "w", encoding="utf-8") as f:
+            f.write(app_js)
+        with open(os.path.join(self.test_dir, "routes", "orders.js"), "w", encoding="utf-8") as f:
+            f.write(orders_js)
+        with open(os.path.join(self.test_dir, "services", "orderService.js"), "w", encoding="utf-8") as f:
+            f.write(service_js)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        matched = mapper.match_url("GET", "/api/v2/orders/lookup/99")
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.path_pattern, "/api/v2/orders/lookup/:orderId")
+        self.assertIn("orderId", matched.parameters)
+        self.assertIn("filter", matched.parameters)
+        self.assertIn("fetchOrderUnsafe", matched.called_funcs)
+        self.assertIn("runRawSql", matched.called_funcs)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        decoys = [f for f in sast_findings if f.is_protected_decoy]
+        self.assertGreaterEqual(len(decoys), 1)
+
+        dast_sqli = CanonicalFinding(
+            id="dast_express_sqli",
+            source=FindingSource.DAST,
+            cwe="CWE-89",
+            severity=Severity.CRITICAL,
+            url="http://127.0.0.1:3000/api/v2/orders/lookup/99?filter=OPEN",
+            method="GET",
+            param="filter",
+            payload="' OR '1'='1",
+            evidence="SequelizeDatabaseError: syntax error",
+        )
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast_findings, [dast_sqli])
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].cwe, "CWE-89")
+        self.assertEqual(confirmed[0].file_path, "services/orderService.js")
+        self.assertIn("services/orderService.js", confirmed[0].link_reason)
+
+    def test_phase4_unseen_fastapi_depends_pydantic_3hop_and_multi_param_disambiguation(self):
+        """
+        Phase 4 (Task A4.1 - Unseen FastAPI Multi-Param & 3-Hop Torture Test):
+        Verifies FastAPI nested APIRouter + Depends() + Pydantic BaseModel JSON body
+        + 3-hop helper chain and disambiguates two CWE-89 sinks on the same route
+        (coupon_code vs referral_code) with 0 wrong links.
+        """
+        app_py = '''
+from fastapi import FastAPI, APIRouter, Depends
+from pydantic import BaseModel
+from service_layer import process_checkout_step1
+
+app = FastAPI()
+v1_router = APIRouter(prefix="/v1")
+
+class CheckoutBody(BaseModel):
+    coupon_code: str
+    referral_code: str
+
+def get_current_tenant(tenant_id: str = "acme"):
+    return tenant_id
+
+@v1_router.post("/checkout/apply")
+async def apply_checkout(payload: CheckoutBody, tenant: str = Depends(get_current_tenant)):
+    return process_checkout_step1(payload.coupon_code, payload.referral_code, tenant)
+
+app.include_router(v1_router, prefix="/api")
+'''
+        service_py = '''
+from repo_layer import apply_coupon_and_referral_sql
+
+def process_checkout_step1(coupon_code, referral_code, tenant):
+    return process_checkout_step2(coupon_code, referral_code)
+
+def process_checkout_step2(coupon_code, referral_code):
+    return apply_coupon_and_referral_sql(coupon_code, referral_code)
+'''
+        repo_py = '''
+import sqlite3
+
+def apply_coupon_and_referral_sql(coupon_code, referral_code):
+    conn = sqlite3.connect("checkout.db")
+    conn.execute(f"SELECT discount FROM coupons WHERE code = '{coupon_code}'")
+    conn.execute(f"SELECT bonus FROM referrals WHERE ref = '{referral_code}'")
+    return True
+'''
+        with open(os.path.join(self.test_dir, "app.py"), "w", encoding="utf-8") as f:
+            f.write(app_py)
+        with open(os.path.join(self.test_dir, "service_layer.py"), "w", encoding="utf-8") as f:
+            f.write(service_py)
+        with open(os.path.join(self.test_dir, "repo_layer.py"), "w", encoding="utf-8") as f:
+            f.write(repo_py)
+
+        mapper = RouteMapper(self.test_dir)
+        mapper.scan()
+        matched = mapper.match_url("POST", "/api/v1/checkout/apply")
+        self.assertIsNotNone(matched)
+        self.assertIn("coupon_code", matched.parameters)
+        self.assertIn("referral_code", matched.parameters)
+        self.assertNotIn("tenant", matched.parameters)
+        self.assertIn("get_current_tenant", matched.called_funcs)
+        self.assertIn("apply_coupon_and_referral_sql", matched.called_funcs)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        self.assertEqual(len(sast_findings), 2)
+
+        # DAST specifically proves 'referral_code' is exploitable
+        dast_referral = CanonicalFinding(
+            id="dast_fastapi_ref",
+            source=FindingSource.DAST,
+            cwe="CWE-89",
+            severity=Severity.CRITICAL,
+            url="http://127.0.0.1:8000/api/v1/checkout/apply",
+            method="POST",
+            param="referral_code",
+            payload="' OR 1=1--",
+            evidence="sqlite3.OperationalError",
+        )
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast_findings, [dast_referral])
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        code_only = [i for i in issues if i.status == IssueStatus.CODE_ONLY]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(len(code_only), 1)
+        self.assertIn("referral_code", confirmed[0].code_snippet)
+        self.assertIn("coupon_code", code_only[0].code_snippet)
 
 
 if __name__ == "__main__":

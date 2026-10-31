@@ -175,12 +175,18 @@ class SASTVisitor(ast.NodeVisitor):
                     var_to_param.setdefault(v_id, p_id)
 
         # Look for interpolated variables {var} in snippet
-        for m_brace in re.finditer(r"\{\s*([a-zA-Z_]\w*)", snippet or ""):
-            tok = m_brace.group(1)
-            if tok in var_to_param:
-                return fn_name, var_to_param[tok]
-            if tok not in ("html", "shlex", "os", "urllib", "self", "request"):
-                return fn_name, tok
+        brace_tokens = [
+            m_brace.group(1)
+            for m_brace in re.finditer(r"\{\s*([a-zA-Z_]\w*)", snippet or "")
+            if m_brace.group(1) not in ("html", "shlex", "os", "urllib", "self", "request")
+        ]
+        if brace_tokens:
+            mapped_braces = [var_to_param[t] for t in brace_tokens if t in var_to_param]
+            if len(set(mapped_braces)) == 1:
+                return fn_name, mapped_braces[0]
+            if len(set(brace_tokens)) == 1:
+                return fn_name, brace_tokens[0]
+            return fn_name, None
 
         # Check if any mapped variable appears as a token in snippet
         snippet_tokens = set(re.findall(r"\b[a-zA-Z_]\w*\b", snippet or ""))
@@ -675,11 +681,14 @@ class SASTScanner:
                     var_to_param[clean_p] = clean_p
 
         # Check template literal ${var} or concatenation + var
-        for m_interp in re.finditer(r"\$\{\s*([a-zA-Z_]\w*)\s*\}", line_s):
-            tok = m_interp.group(1)
-            if tok in var_to_param:
-                return var_to_param[tok]
-            return tok
+        interp_tokens = [m_interp.group(1) for m_interp in re.finditer(r"\$\{\s*([a-zA-Z_]\w*)\s*\}", line_s)]
+        if interp_tokens:
+            mapped_interps = [var_to_param[t] for t in interp_tokens if t in var_to_param]
+            if len(set(mapped_interps)) == 1:
+                return mapped_interps[0]
+            if len(set(interp_tokens)) == 1:
+                return interp_tokens[0]
+            return None
         for tok in re.findall(r"\b[a-zA-Z_]\w*\b", line_s):
             if tok in var_to_param:
                 return var_to_param[tok]

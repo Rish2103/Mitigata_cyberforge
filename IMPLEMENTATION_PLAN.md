@@ -1,8 +1,8 @@
 # CyberForge (Mitigata Hackathon) — Renewed Team-of-2 Implementation Plan (Phase 2 to Final Submission)
 **Track:** `PROBLEM 06 · FLAGSHIP` — SAST and DAST Correlation (`CYBERFORGE CORRELATE` / `GORDON CORRELATE`)  
 **Format:** 24-Hour Overnight Sprint · Team of 2 (`Person A` + `Person B`)  
-**Current Baseline:** Branch `phase-1-implementation` (`commit e80055d`) · `31/31` Pytest Tests Passing (`0.63s`) · Live Storefront (`:5000`) & Main Scanner (`:8000`) Running  
-**Active Timeline:** **Phase 2 (`7:30 PM – 10:30 PM`)** → **Phase 3 (`10:30 PM – 2:30 AM`)** → **Phase 4 (`2:30 AM – 7:00 AM`)** → **Phase 5 (`7:00 AM – 11:00 AM Day 2`)**
+**Current Baseline:** Branch `phase-4` · `51/51` Pytest Tests Passing (`1.99s`) · Live Storefront (`:5000`) & Main Scanner (`:8000`) Ready  
+**Active Timeline:** **Phase 2 [DONE]** → **Phase 3 [DONE]** → **Phase 4 (`2:30 AM – 7:00 AM`) [DONE]** → **Phase 5 (`7:00 AM – 11:00 AM Day 2`)**
 
 ---
 
@@ -139,13 +139,13 @@ So `api/main.py` (Person B) and `engine/correlator.py` / `engine/scope_reducer.p
 
 ---
 
-### PHASE 4: `2:30 AM – 7:00 AM` (Overnight Sprint Part 2) — **Staggered Rest Shifts & Unseen-App Torture Testing**
+### PHASE 4: `2:30 AM – 7:00 AM` (Overnight Sprint Part 2) — **Staggered Rest Shifts & Unseen-App Torture Testing [COMPLETED on `phase-4` / 51/51 Pytests Passing]**
 
 | Time Window | **Person A Schedule** | **Person B Schedule** |
 | :--- | :--- | :--- |
-| **`2:30 AM – 4:15 AM`** | 😴 **Person A Rest Shift (105 mins)** | 🖥️ **Person B Active:** Finish UI polish in `ui/index.html`, test SARIF download & scan diffing in `tests/test_subblock1_dast_and_db.py`. |
-| **`4:15 AM – 6:00 AM`** | 🖥️ **Person A Active:** Build & run the **Unseen-App Torture Suite** in `tests/test_person_a.py` (Express.js `B-7`, FastAPI nested routers, Django `urlpatterns`, multi-param same-route disambiguation, 3-hop helper chains). | 😴 **Person B Rest Shift (105 mins)** |
-| **`6:00 AM – 7:00 AM`** | 🤝 **Both Awake — Sync #2 & Pre-Drop Check:** Merge both branches into `phase-1-implementation`, run `python -m pytest -v`, verify `:5000` and `:8000` live flow before the `07:00 AM` Unseen App drop. | 🤝 **Both Awake — Sync #2 & Pre-Drop Check:** Verify UI dashboard renders all 5 Confirmed CWEs, Code-only, Runtime-only, SCA Reachability, and Scope Reduction metrics cleanly. |
+| **`2:30 AM – 4:15 AM`** | 😴 **Person A Rest Shift (105 mins)** | 🖥️ **Person B Active [COMPLETED (`Task B4.1`)]:** Finished UI polish in `ui/index.html` (`#ciGateBadge` in `#judgeComplexityBanner`, interactive Scan Diff rows with `Summary & Link Reason` + drawer drill-down), wired single-pass `RouteMapper(request.source_dir)` across `POST /scans` in `api/main.py`, and verified full `B-5` Scan Diff (`NEW`, `FIXED`, `STILL-OPEN`) + SARIF/CI Gate `FAIL -> PASS` transition in `tests/test_subblock1_dast_and_db.py`. |
+| **`4:15 AM – 6:00 AM`** | 🖥️ **Person A Active [COMPLETED (`Task A4.1`)]:** Built & verified the **Unseen-App Torture Suite** in `tests/test_person_a.py` and hardened `engine/route_mapper.py` & `engine/sast_scanner.py` (Django `include()` prefix resolution + `urlpatterns += [...]` + `re_path` named regex groups + `View.as_view()`, Express.js cross-file `require()` router mounting + multi-param template literal SQLi correlation, FastAPI `APIRouter` + `Depends()` + Pydantic body models + 3-hop helper chains + same-route multi-param disambiguation). | 😴 **Person B Rest Shift (105 mins)** |
+| **`6:00 AM – 7:00 AM`** | 🤝 **Both Awake — Sync #2 & Pre-Drop Check [COMPLETED]:** Verified single-pass AST execution (`RouteMapper.scan()` runs strictly once per `/scans` request), LAN IP safety lock (`192.168.60.139` blocked with HTTP 403), `51/51` pytest tests passing (`1.99s`), and `7/7` PRD benchmark metrics passing (`28.2 ms`). | 🤝 **Both Awake — Sync #2 & Pre-Drop Check [COMPLETED]:** Verified UI dashboard renders all 5 Confirmed CWEs, Code-only, Runtime-only, SCA Reachability, CI Gate Badge, and Scope Reduction metrics cleanly. |
 
 ---
 

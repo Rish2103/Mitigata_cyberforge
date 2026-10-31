@@ -1532,3 +1532,325 @@ def test_phase3_b32_and_b33_ui_banner_remediation_diff_and_packaging() -> None:
     assert "SARIF v2.1.0" in readme_md
 
 
+def test_phase4_b41_scan_diff_lifecycle_new_fixed_still_open_and_sarif_ci_gate_transition(
+    tmp_path: Path,
+) -> None:
+    """
+    Phase 4 (Task B4.1):
+    Verifies full B-5 Scan Diff lifecycle (NEW, FIXED, STILL-OPEN) across 3 consecutive
+    scans, SARIF v2.1.0 download fidelity, and CI/CD Gate FAIL -> PASS transition.
+    """
+    db_file = str(tmp_path / "phase4_diff_lifecycle.db")
+    os.environ["GORDON_DB_PATH"] = db_file
+    try:
+        client = TestClient(gordon_api_app)
+
+        seeded_routes = [
+            {
+                "method": "GET",
+                "path_pattern": "/api/orders",
+                "file": "orders.py",
+                "func_name": "get_orders",
+                "start_line": 10,
+                "end_line": 22,
+                "params": ["q"],
+            },
+            {
+                "method": "GET",
+                "path_pattern": "/api/search",
+                "file": "search.py",
+                "func_name": "search_items",
+                "start_line": 30,
+                "end_line": 42,
+                "params": ["term"],
+            },
+            {
+                "method": "POST",
+                "path_pattern": "/api/diag",
+                "file": "diag.py",
+                "func_name": "run_diag",
+                "start_line": 50,
+                "end_line": 65,
+                "params": ["host"],
+            },
+        ]
+
+        # Scan 1 (Baseline): Confirmed CWE-89 on /api/orders + Confirmed CWE-79 on /api/search
+        r1 = client.post(
+            "/scans",
+            json={
+                "app_name": "phase4-shop",
+                "target_url": "http://127.0.0.1:5000",
+                "run_live_dast": False,
+                "seeded_routes": seeded_routes,
+                "seeded_sast_findings": [
+                    {
+                        "source": "SAST",
+                        "cwe": "CWE-89",
+                        "severity": "Critical",
+                        "file": "orders.py",
+                        "line": 15,
+                        "func_name": "get_orders",
+                        "param": "q",
+                        "snippet": "conn.execute(f'SELECT * FROM orders WHERE q = {q}')",
+                    },
+                    {
+                        "source": "SAST",
+                        "cwe": "CWE-79",
+                        "severity": "High",
+                        "file": "search.py",
+                        "line": 35,
+                        "func_name": "search_items",
+                        "param": "term",
+                        "snippet": "return f'<div>{term}</div>'",
+                    },
+                ],
+                "seeded_dast_findings": [
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-89",
+                        "severity": "Critical",
+                        "url": "http://127.0.0.1:5000/api/orders?q=1",
+                        "canonical_path": "/api/orders",
+                        "method": "GET",
+                        "param": "q",
+                        "payload": "' OR '1'='1",
+                        "evidence": "sqlite3.OperationalError",
+                    },
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-79",
+                        "severity": "High",
+                        "url": "http://127.0.0.1:5000/api/search?term=x",
+                        "canonical_path": "/api/search",
+                        "method": "GET",
+                        "param": "term",
+                        "payload": "<script>alert(1)</script>",
+                        "evidence": "Unescaped reflection",
+                    },
+                ],
+            },
+        )
+        assert r1.status_code == 200
+        scan1_id = r1.json()["scan_id"]
+
+        # Verify Scan 1 CI Gate blocks (FAIL, exit_code=1)
+        gate1 = client.get(f"/scans/{scan1_id}/ci-gate")
+        assert gate1.status_code == 200
+        assert gate1.json()["status"] == "FAIL"
+        assert gate1.json()["exit_code"] == 1
+        assert gate1.json()["passed"] is False
+        assert gate1.json()["blocking_confirmed_count"] == 2
+
+        # Scan 2 (Evolution): CWE-89 fixed (FIXED), CWE-79 remains (STILL-OPEN), CWE-78 introduced (NEW)
+        r2 = client.post(
+            "/scans",
+            json={
+                "app_name": "phase4-shop",
+                "target_url": "http://127.0.0.1:5000",
+                "run_live_dast": False,
+                "seeded_routes": seeded_routes,
+                "seeded_sast_findings": [
+                    {
+                        "source": "SAST",
+                        "cwe": "CWE-79",
+                        "severity": "High",
+                        "file": "search.py",
+                        "line": 35,
+                        "func_name": "search_items",
+                        "param": "term",
+                        "snippet": "return f'<div>{term}</div>'",
+                    },
+                    {
+                        "source": "SAST",
+                        "cwe": "CWE-78",
+                        "severity": "Critical",
+                        "file": "diag.py",
+                        "line": 56,
+                        "func_name": "run_diag",
+                        "param": "host",
+                        "snippet": "subprocess.check_output(f'ping -c 1 {host}', shell=True)",
+                    },
+                ],
+                "seeded_dast_findings": [
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-79",
+                        "severity": "High",
+                        "url": "http://127.0.0.1:5000/api/search?term=x",
+                        "canonical_path": "/api/search",
+                        "method": "GET",
+                        "param": "term",
+                        "payload": "<script>alert(1)</script>",
+                        "evidence": "Unescaped reflection",
+                    },
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-78",
+                        "severity": "Critical",
+                        "url": "http://127.0.0.1:5000/api/diag",
+                        "canonical_path": "/api/diag",
+                        "method": "POST",
+                        "param": "host",
+                        "payload": "127.0.0.1; id",
+                        "evidence": "uid=0(root)",
+                    },
+                ],
+            },
+        )
+        assert r2.status_code == 200
+        scan2_id = r2.json()["scan_id"]
+
+        # Compare Scan 1 -> Scan 2 via /scans/compare
+        diff_resp = client.get(f"/scans/compare?base={scan1_id}&target={scan2_id}")
+        assert diff_resp.status_code == 200
+        diff_data = diff_resp.json()
+        assert diff_data["summary"]["new_count"] == 1
+        assert diff_data["summary"]["fixed_count"] == 1
+        assert diff_data["summary"]["still_open_count"] == 1
+        assert diff_data["new_issues"][0]["cwe"] == "CWE-78"
+        assert diff_data["fixed_issues"][0]["cwe"] == "CWE-89"
+        assert diff_data["still_open_issues"][0]["cwe"] == "CWE-79"
+
+        # Scan 3 (Remediated): Only Medium Runtime-only header finding remains -> CI Gate PASS
+        r3 = client.post(
+            "/scans",
+            json={
+                "app_name": "phase4-shop",
+                "target_url": "http://127.0.0.1:5000",
+                "run_live_dast": False,
+                "seeded_routes": seeded_routes,
+                "seeded_sast_findings": [],
+                "seeded_dast_findings": [
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-693",
+                        "severity": "Medium",
+                        "url": "http://127.0.0.1:5000/api/orders",
+                        "canonical_path": "/api/orders",
+                        "method": "GET",
+                        "evidence": "Missing Content-Security-Policy header",
+                    }
+                ],
+            },
+        )
+        assert r3.status_code == 200
+        scan3_id = r3.json()["scan_id"]
+
+        gate3 = client.get(f"/scans/{scan3_id}/ci-gate")
+        assert gate3.status_code == 200
+        assert gate3.json()["status"] == "PASS"
+        assert gate3.json()["exit_code"] == 0
+        assert gate3.json()["passed"] is True
+    finally:
+        os.environ.pop("GORDON_DB_PATH", None)
+
+
+def test_phase4_sync2_single_pass_ast_and_unseen_polyglot_e2e(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Phase 4 (Sync #2 Verification):
+    1. Verifies POST /scans executes RouteMapper.scan() strictly once (single-pass AST O(N_ast)).
+    2. Verifies 3-hop helper call chain correlation through the FastAPI /scans endpoint.
+    3. Verifies non-loopback LAN IPs (e.g. 192.168.60.139) are rejected with HTTP 403.
+    """
+    unseen_dir = tmp_path / "unseen_app"
+    unseen_dir.mkdir(parents=True, exist_ok=True)
+    (unseen_dir / "app.py").write_text(
+        """
+from flask import Flask, request
+from service import step1_lookup
+
+app = Flask(__name__)
+
+@app.route("/api/v1/ledger", methods=["GET"])
+def read_ledger():
+    acct = request.args.get("acct", "")
+    return step1_lookup(acct)
+""",
+        encoding="utf-8",
+    )
+    (unseen_dir / "service.py").write_text(
+        """
+from repository import step2_query
+
+def step1_lookup(acct):
+    return step2_query(acct)
+""",
+        encoding="utf-8",
+    )
+    (unseen_dir / "repository.py").write_text(
+        """
+import sqlite3
+
+def step2_query(acct):
+    conn = sqlite3.connect("ledger.db")
+    return conn.execute(f"SELECT balance FROM accounts WHERE acct = '{acct}'")
+""",
+        encoding="utf-8",
+    )
+
+    from engine.route_mapper import RouteMapper
+
+    scan_call_count = 0
+    orig_scan = RouteMapper.scan
+
+    def tracked_scan(self):
+        nonlocal scan_call_count
+        scan_call_count += 1
+        return orig_scan(self)
+
+    monkeypatch.setattr(RouteMapper, "scan", tracked_scan)
+
+    db_file = str(tmp_path / "phase4_sync2.db")
+    os.environ["GORDON_DB_PATH"] = db_file
+    try:
+        client = TestClient(gordon_api_app)
+
+        # Reject LAN IP 192.168.60.139 with HTTP 403
+        lan_blocked = client.post(
+            "/scans",
+            json={"target_url": "http://192.168.60.139:8000", "run_live_dast": False},
+        )
+        assert lan_blocked.status_code == 403
+
+        # Run full scan against unseen_dir with seeded DAST proof on /api/v1/ledger
+        resp = client.post(
+            "/scans",
+            json={
+                "app_name": "unseen-ledger",
+                "target_url": "http://127.0.0.1:5000",
+                "source_dir": str(unseen_dir),
+                "run_live_dast": False,
+                "seeded_dast_findings": [
+                    {
+                        "source": "DAST",
+                        "cwe": "CWE-89",
+                        "severity": "Critical",
+                        "url": "http://127.0.0.1:5000/api/v1/ledger?acct=101",
+                        "canonical_path": "/api/v1/ledger",
+                        "method": "GET",
+                        "param": "acct",
+                        "payload": "' OR '1'='1",
+                        "evidence": "sqlite3.OperationalError",
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        # RouteMapper.scan() must be invoked strictly once across the entire pipeline
+        assert scan_call_count == 1
+        body = resp.json()
+        assert body["confirmed_count"] == 1
+        issues_resp = client.get(f"/issues?scan_id={body['scan_id']}")
+        assert issues_resp.status_code == 200
+        confirmed = [i for i in issues_resp.json() if i["status"] == "Confirmed"]
+        assert len(confirmed) == 1
+        assert confirmed[0]["file"] == "repository.py"
+        assert "repository.py:6" in confirmed[0]["link_reason"]
+    finally:
+        os.environ.pop("GORDON_DB_PATH", None)
+
+
+

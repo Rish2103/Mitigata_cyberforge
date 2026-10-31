@@ -39,7 +39,7 @@ def _normalize_route_pattern_to_regex(pattern: str) -> str:
 
     if not clean.startswith("/"):
         clean = "/" + clean
-    clean_no_trail = clean.rstrip("/")
+    clean_no_trail = clean.rstrip("$").rstrip("/")
     if not clean_no_trail:
         clean_no_trail = "/"
 
@@ -50,7 +50,7 @@ def _normalize_route_pattern_to_regex(pattern: str) -> str:
             return f"(?P<{name}>.*)"
         return f"(?P<{name}>[^/]+)"
 
-    regex = re.sub(r"<(?:(\w+):)?(\w+)>", _flask_param, clean_no_trail)
+    regex = re.sub(r"(?<!\?P)<(?:(\w+):)?(\w+)>", _flask_param, clean_no_trail)
 
     # 2. FastAPI style: {param} or {param:path} or {param:int}
     def _fastapi_param(match):
@@ -218,12 +218,14 @@ class RouteExtractor(ast.NodeVisitor):
         rel_path: str,
         global_prefixes: Optional[Dict[str, str]] = None,
         pydantic_models: Optional[Dict[str, List[str]]] = None,
+        django_file_prefix: str = "",
     ):
         self.file_path = file_path
         self.rel_path = rel_path.replace("\\", "/")
         self.routes: List[RouteEntry] = []
         self.blueprint_prefixes: Dict[str, str] = dict(global_prefixes or {})
         self.pydantic_models: Dict[str, List[str]] = pydantic_models or {}
+        self.django_file_prefix: str = (django_file_prefix or "").strip()
         self.django_Pending_routes: List[Tuple[str, str, str]] = []  # (path, target_func_name, rel_path)
 
     def visit_Assign(self, node: ast.Assign):
@@ -254,7 +256,19 @@ class RouteExtractor(ast.NodeVisitor):
                 if isinstance(node.value, (ast.List, ast.Tuple)):
                     for elt in node.value.elts:
                         self._extract_django_urlpattern(elt)
+                elif isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add):
+                    for side in (node.value.left, node.value.right):
+                        if isinstance(side, (ast.List, ast.Tuple)):
+                            for elt in side.elts:
+                                self._extract_django_urlpattern(elt)
 
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign):
+        if isinstance(node.target, ast.Name) and node.target.id == "urlpatterns":
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                for elt in node.value.elts:
+                    self._extract_django_urlpattern(elt)
         self.generic_visit(node)
 
     @staticmethod
@@ -286,11 +300,17 @@ class RouteExtractor(ast.NodeVisitor):
                 view_func = None
                 if len(node.args) >= 3:
                     view_func = self._extract_view_target(node.args[2])
+                explicit_methods: List[str] = []
                 for kw in node.keywords:
                     if kw.arg == "view_func":
                         view_func = self._extract_view_target(kw.value) or view_func
+                    elif kw.arg == "methods" and isinstance(kw.value, (ast.List, ast.Tuple, ast.Set)):
+                        for elt in kw.value.elts:
+                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                explicit_methods.append(elt.value.upper())
                 if view_func:
-                    self.django_Pending_routes.append((path, view_func, "flask"))
+                    fw_tag = f"flask:{','.join(explicit_methods)}" if explicit_methods else "flask"
+                    self.django_Pending_routes.append((path, view_func, fw_tag))
         self.generic_visit(node)
 
     def _extract_django_urlpattern(self, elt: ast.AST):
@@ -305,6 +325,11 @@ class RouteExtractor(ast.NodeVisitor):
         if func_name in ("path", "re_path", "url") and len(elt.args) >= 2:
             if isinstance(elt.args[0], ast.Constant) and isinstance(elt.args[0].value, str):
                 raw_path = elt.args[0].value
+                if self.django_file_prefix:
+                    clean_prefix = self.django_file_prefix.strip("^$").strip("/")
+                    clean_sub = raw_path.lstrip("^").rstrip("$").lstrip("/")
+                    if clean_prefix:
+                        raw_path = f"/{clean_prefix}/{clean_sub}" if clean_sub else f"/{clean_prefix}/"
                 view_arg = elt.args[1]
                 target_func = self._extract_view_target(view_arg) or ""
                 if target_func:
@@ -433,6 +458,8 @@ class RouteMapper:
         self._router_mount_prefixes: Dict[str, str] = {}
         self._router_def_files: Dict[str, Set[str]] = {}
         self._router_parent_edges: List[Tuple[str, str, str]] = []
+        self._django_include_prefixes: Dict[str, str] = {}
+        self._django_include_edges: List[Tuple[str, str, str]] = []
         self._pydantic_models: Dict[str, List[str]] = {}
         self._pending_view_routes: List[Tuple[str, str, str]] = []
         self._class_views: Dict[str, List[Tuple[str, str, str, int, int, Set[str], Set[str]]]] = {}
@@ -494,6 +521,8 @@ class RouteMapper:
         self._router_mount_prefixes = {}
         self._router_def_files = {}
         self._router_parent_edges = []
+        self._django_include_prefixes = {}
+        self._django_include_edges = []
         self._pydantic_models = {}
         self._pending_view_routes = []
         self._class_views = {}
@@ -549,6 +578,18 @@ class RouteMapper:
                 candidate = self._join_prefixes(parent_p, edge_prefix, child_def_p)
                 if candidate:
                     self._global_router_prefixes[child_var] = candidate
+
+        # Propagate nested Django include('app.urls') prefix chains across modular urls.py files
+        for _ in range(4):
+            for parent_rel, target_mod, edge_prefix in self._django_include_edges:
+                parent_p = self._django_include_prefixes.get(parent_rel, "")
+                candidate = self._join_prefixes(parent_p, edge_prefix)
+                if candidate:
+                    self._django_include_prefixes[target_mod] = candidate
+                    mod_as_path = target_mod.replace(".", "/") + ".py"
+                    self._django_include_prefixes[mod_as_path] = candidate
+                    mod_underscore = target_mod.replace(".", "_") + ".py"
+                    self._django_include_prefixes[mod_underscore] = candidate
 
         # Pass 2 on Python files: extract routes and call graphs
         for full_path, rel_path in py_files:
@@ -667,7 +708,7 @@ class RouteMapper:
                         qual_router_var = ""
                         if isinstance(router_arg, ast.Name):
                             router_var = router_arg.id
-                            qual_router_var = local_qual_import_aliases.get(router_var, "")
+                            qual_router_var = local_qual_import_aliases.get(router_var, f"{mod_stem}.{router_var}")
                         elif isinstance(router_arg, ast.Attribute):
                             router_var = router_arg.attr
                             if isinstance(router_arg.value, ast.Name):
@@ -690,6 +731,40 @@ class RouteMapper:
                                 self._router_parent_edges.append((parent_orig, orig_name, prefix))
                             if qual_router_var:
                                 self._router_parent_edges.append((parent_orig, qual_router_var, prefix))
+
+                # 3. Django path('api/v1/billing/', include('billing.urls')) cross-file prefix collection
+                elif isinstance(node, ast.Call):
+                    fn_name = ""
+                    if isinstance(node.func, ast.Name):
+                        fn_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        fn_name = node.func.attr
+                    if fn_name in ("path", "re_path", "url") and len(node.args) >= 2:
+                        if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                            inc_prefix = str(node.args[0].value).strip("^$")
+                            second_arg = node.args[1]
+                            if isinstance(second_arg, ast.Call):
+                                inc_fn = ""
+                                if isinstance(second_arg.func, ast.Name):
+                                    inc_fn = second_arg.func.id
+                                elif isinstance(second_arg.func, ast.Attribute):
+                                    inc_fn = second_arg.func.attr
+                                if inc_fn == "include" and second_arg.args:
+                                    inc_target = second_arg.args[0]
+                                    target_mod = ""
+                                    if isinstance(inc_target, ast.Constant) and isinstance(inc_target.value, str):
+                                        target_mod = inc_target.value
+                                    elif isinstance(inc_target, (ast.Tuple, ast.List)) and inc_target.elts:
+                                        first_elt = inc_target.elts[0]
+                                        if isinstance(first_elt, ast.Constant) and isinstance(first_elt.value, str):
+                                            target_mod = first_elt.value
+                                    if target_mod:
+                                        norm_inc = self._join_prefixes(inc_prefix)
+                                        if norm_inc:
+                                            self._django_include_prefixes[target_mod] = norm_inc
+                                            self._django_include_prefixes[target_mod.replace(".", "/") + ".py"] = norm_inc
+                                            self._django_include_prefixes[target_mod.replace(".", "_") + ".py"] = norm_inc
+                                        self._django_include_edges.append((rel_path, target_mod, inc_prefix))
         except Exception:
             pass
 
@@ -754,11 +829,19 @@ class RouteMapper:
                     elif len(mod_stems) > 1:
                         file_prefixes.pop(r_var, None)
 
+            django_prefix = (
+                self._django_include_prefixes.get(rel_path)
+                or self._django_include_prefixes.get(os.path.basename(rel_path))
+                or self._django_include_prefixes.get(rel_path[:-3].replace("/", ".") if rel_path.endswith(".py") else "")
+                or ""
+            )
+
             extractor = RouteExtractor(
                 full_path,
                 rel_path,
                 global_prefixes=file_prefixes,
                 pydantic_models=self._pydantic_models,
+                django_file_prefix=django_prefix,
             )
             extractor.visit(tree)
             self.routes.extend(extractor.routes)
@@ -767,11 +850,20 @@ class RouteMapper:
             pass
 
     def _resolve_pending_view_routes(self):
-        for raw_path, target_func, framework in self._pending_view_routes:
+        for raw_path, target_func, framework_spec in self._pending_view_routes:
+            if ":" in framework_spec:
+                framework, methods_csv = framework_spec.split(":", 1)
+                explicit_methods = [m.strip().upper() for m in methods_csv.split(",") if m.strip()]
+            else:
+                framework = framework_spec
+                explicit_methods = []
+
             norm_path = raw_path if raw_path.startswith("/") or raw_path.startswith("^") else "/" + raw_path
             if target_func.startswith("ClassView:"):
                 cls_name = target_func.split(":", 1)[1]
                 for http_method, qual_name, rel_path, start_line, end_line, called_funcs, params in self._class_views.get(cls_name, []):
+                    if explicit_methods and http_method.upper() not in explicit_methods:
+                        continue
                     route_params = set(params)
                     param_sources: Dict[str, str] = {}
                     for m in re.finditer(r"<(?:\w+:)?(\w+)>", norm_path):
@@ -810,7 +902,8 @@ class RouteMapper:
                     route_params.add(m.group(1))
                     param_sources[m.group(1)] = "path"
 
-                for method in ("GET", "POST"):
+                methods_to_use = tuple(explicit_methods) if explicit_methods else ("GET", "POST")
+                for method in methods_to_use:
                     self.routes.append(
                         RouteEntry(
                             method=method,
@@ -832,21 +925,53 @@ class RouteMapper:
     # -------------------------------------------------------------------------
     def _scan_express_files(self, js_files: List[Tuple[str, str]]):
         router_prefixes: Dict[str, str] = {}
+        file_router_prefixes: Dict[str, str] = {}
 
-        # First pass: collect app.use('/prefix', routerName) and helper functions
+        # First pass: collect app.use('/prefix', routerName), cross-file require() mounts, and helper functions
         for full_path, rel_path in js_files:
             try:
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
                 lines = content.splitlines()
+                cur_dir = os.path.dirname(rel_path).replace("\\", "/")
+
+                # Track const ordersRouter = require('./routes/orders') or import ordersRouter from './routes/orders'
+                local_requires: Dict[str, str] = {}
+                for req_m in re.finditer(
+                    r"""(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s+([a-zA-Z_]\w*)\s+from\s+['"]([^'"]+)['"]""",
+                    content,
+                ):
+                    var_name = req_m.group(1) or req_m.group(3)
+                    req_path = req_m.group(2) or req_m.group(4)
+                    if var_name and req_path:
+                        local_requires[var_name] = req_path
+
+                def _register_file_prefix(req_target: str, mount_prefix: str):
+                    clean_p = mount_prefix.rstrip("/")
+                    if not clean_p:
+                        return
+                    joined = os.path.normpath(os.path.join(cur_dir, req_target)).replace("\\", "/").lstrip("./")
+                    for cand in (joined, f"{joined}.js", f"{joined}.ts", f"{joined}/index.js", os.path.basename(joined) + ".js"):
+                        file_router_prefixes[cand] = clean_p
 
                 # Detect app.use('/api', apiRouter)
                 for m in re.finditer(r"""\b(?:app|router)\s*\.\s*use\s*\(\s*['"]([^'"]+)['"]\s*,\s*([a-zA-Z_]\w*)""", content):
-                    router_prefixes[m.group(2)] = m.group(1).rstrip("/")
+                    mount_p = m.group(1).rstrip("/")
+                    r_var = m.group(2)
+                    router_prefixes[r_var] = mount_p
+                    if r_var in local_requires:
+                        _register_file_prefix(local_requires[r_var], mount_p)
 
-                # Detect named JS functions: function myHelper(a, b) { ... } or const myHelper = (a, b) => { ... }
+                # Detect inline app.use('/api/orders', require('./routes/orders'))
+                for m_in in re.finditer(
+                    r"""\b(?:app|router)\s*\.\s*use\s*\(\s*['"]([^'"]+)['"]\s*,\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+                    content,
+                ):
+                    _register_file_prefix(m_in.group(2), m_in.group(1))
+
+                # Detect named JS functions: function myHelper(a, b) { ... }, const myHelper = (a, b) => { ... }, or exports.myHelper = function(a, b) { ... }
                 func_pattern = re.compile(
-                    r"""(?:(?:async\s+)?function\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)|(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>)\s*\{"""
+                    r"""(?:(?:async\s+)?function\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)|(?:(?:const|let|var)\s+|(?:module\.)?exports\.)([a-zA-Z_]\w*)\s*=\s*(?:async\s*)?(?:function\s*)?\(([^)]*)\)\s*(?:=>)?)\s*\{"""
                 )
                 for idx, line_str in enumerate(lines):
                     fm = func_pattern.search(line_str)
@@ -879,6 +1004,11 @@ class RouteMapper:
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
                 lines = content.splitlines()
+                file_mount_prefix = (
+                    file_router_prefixes.get(rel_path)
+                    or file_router_prefixes.get(os.path.basename(rel_path))
+                    or ""
+                )
 
                 # 2a. Direct obj.get('/path', handler)
                 for idx, line_str in enumerate(lines):
@@ -891,8 +1021,10 @@ class RouteMapper:
                         rm.group(3),
                         rm.group(4).strip(),
                     )
-                    prefix = router_prefixes.get(obj_name, "")
+                    prefix = router_prefixes.get(obj_name) or file_mount_prefix
                     full_route_path = f"{prefix}/{raw_path.lstrip('/')}" if prefix else raw_path
+                    if len(full_route_path) > 1 and full_route_path.endswith("/"):
+                        full_route_path = full_route_path.rstrip("/")
                     if not full_route_path.startswith("/"):
                         full_route_path = "/" + full_route_path
 
@@ -951,8 +1083,10 @@ class RouteMapper:
                     if not cm:
                         continue
                     obj_name, raw_path = cm.group(1), cm.group(2)
-                    prefix = router_prefixes.get(obj_name, "")
+                    prefix = router_prefixes.get(obj_name) or file_mount_prefix
                     full_route_path = f"{prefix}/{raw_path.lstrip('/')}" if prefix else raw_path
+                    if len(full_route_path) > 1 and full_route_path.endswith("/"):
+                        full_route_path = full_route_path.rstrip("/")
                     if not full_route_path.startswith("/"):
                         full_route_path = "/" + full_route_path
 

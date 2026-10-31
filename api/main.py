@@ -647,13 +647,13 @@ async def create_and_run_scan(
         try:
             from engine import route_mapper  # type: ignore
 
-            if hasattr(route_mapper, "build_route_map"):
+            if hasattr(route_mapper, "RouteMapper"):
+                mapper_instance = route_mapper.RouteMapper(request.source_dir)
+                routes.extend(mapper_instance.scan())
+            elif hasattr(route_mapper, "build_route_map"):
                 routes.extend(route_mapper.build_route_map(request.source_dir))
             elif hasattr(route_mapper, "map_routes"):
                 routes.extend(route_mapper.map_routes(request.source_dir))
-            elif hasattr(route_mapper, "RouteMapper"):
-                mapper_instance = route_mapper.RouteMapper(request.source_dir)
-                routes.extend(mapper_instance.scan())
         except ImportError:
             pass
 
@@ -661,7 +661,13 @@ async def create_and_run_scan(
             from engine import sast_scanner  # type: ignore
 
             if hasattr(sast_scanner, "run_sast_scan"):
-                sast_findings.extend(sast_scanner.run_sast_scan(request.source_dir, routes=routes))
+                sast_findings.extend(
+                    sast_scanner.run_sast_scan(
+                        request.source_dir,
+                        routes=routes,
+                        route_mapper=mapper_instance,
+                    )
+                )
             elif hasattr(sast_scanner, "scan_source"):
                 sast_findings.extend(sast_scanner.scan_source(request.source_dir))
             elif hasattr(sast_scanner, "SASTScanner"):
@@ -697,7 +703,13 @@ async def create_and_run_scan(
                 from engine import sca_reachability  # type: ignore
 
                 if hasattr(sca_reachability, "run_sca_reachability"):
-                    sca_findings.extend(sca_reachability.run_sca_reachability(request.source_dir))
+                    sca_findings.extend(
+                        sca_reachability.run_sca_reachability(
+                            request.source_dir,
+                            routes=routes,
+                            route_mapper=mapper_instance,
+                        )
+                    )
                 elif hasattr(sca_reachability, "SCAReachabilityEngine"):
                     sca_engine = sca_reachability.SCAReachabilityEngine(
                         request.source_dir, route_mapper=mapper_instance
@@ -788,6 +800,7 @@ async def create_and_run_scan(
                 sast_findings,
                 dast_findings,
                 route_mapper=mapper_instance,
+                source_dir=request.source_dir,
             )
     except ImportError:
         pass

@@ -101,5 +101,35 @@
   5. **Task A3.3 — Reachability-Aware SCA Bridge & Call-Chain Enrichment (`engine/sca_reachability.py`):**
      - Exported `run_sca_reachability(source_dir, routes=None, route_mapper=None) -> List[SCAFinding]`, human-readable route-to-sink `call_chain` (`["POST /api/config/import", "app.py:import_yaml_config() [line 173]", "yaml.load() [line 176]"]`), descriptive `supply_chain_flags` (`TYPOSQUAT_SUSPECT: ...`, `DEPENDENCY_CONFUSION: ...`, `UNPINNED_VERSION: ...`), and dynamic `getattr` / `importlib` `Unknown` reachability safety (never downgraded).
   6. **Task A4.1 — Unseen-App Torture Test Suite (`tests/test_person_a.py` & `tests/test_correlation.py`):**
-     - **43 / 43 automated pytest tests passing in `1.80s` (`0` failures, 100% pass rate).**
+     - **51 / 51 automated pytest tests passing in `1.99s` (`0` failures, 100% pass rate).**
+
+---
+
+## Phase 4 Completion Status — Both Person A (`Task A4.1`) & Person B (`Task B4.1` + `Sync #2`) (`branch: phase-4`)
+
+- **Branch:** `phase-4`
+- **Person A (`Task A4.1` — Unseen-App Polyglot Torture Suite & AST Hardening):**
+  1. `engine/route_mapper.py`:
+     - Added Django cross-file `path('api/v1/billing/', include('billing.urls'))` prefix collection & propagation to sub-app `urls.py`.
+     - Added `visit_AugAssign` (`urlpatterns += [...]`) support and fixed `_normalize_route_pattern_to_regex` (`(?<!\?P)<(?:(\w+):)?(\w+)>`) so Django `re_path` named regex groups (`(?P<fmt>\w+)`) work alongside prefix propagation and `View.as_view()` class-based views.
+     - Added explicit `methods=[...]` keyword support in Flask `app.add_url_rule(...)`.
+     - Added cross-file Express.js `const ordersRouter = require('./routes/orders'); app.use('/api/v2/orders', ordersRouter)` mount prefix propagation.
+     - Fixed same-file FastAPI `APIRouter(prefix="/v1")` + `app.include_router(v1_router, prefix="/api")` composite prefix resolution (`"/api/v1"`).
+  2. `engine/sast_scanner.py`:
+     - Hardened `_infer_param_and_func` (Python f-strings) and `_infer_js_param` (Express JS template literals) so sinks containing multiple distinct interpolated variables (`${orderId}` and `${filter}`, or `{invoice_id}` and `{sort}`) do not prematurely lock onto the first variable and veto correlation when DAST proves the second parameter is exploitable.
+  3. `core/config.py`:
+     - Tightened `is_safe_target_url()` so non-loopback LAN IPs (`192.168.60.139`, `10.0.0.42`) are blocked across both `is_safe_target_url()` and `validate_target_url()`.
+  4. `tests/test_person_a.py`:
+     - Added `test_phase4_unseen_django_include_prefixes_re_path_and_cbv_correlation`, `test_phase4_unseen_express_cross_file_router_mount_and_3hop_correlation`, and `test_phase4_unseen_fastapi_depends_pydantic_3hop_and_multi_param_disambiguation` + LAN IP assertions in `test_target_safety_guard`.
+- **Person B (`Task B4.1` & `Sync #2` — Single-Pass AST API Wiring, UI Polish & Scan Diff / SARIF / CI Gate Torture Tests):**
+  1. `api/main.py`:
+     - Wired single-pass `mapper_instance = route_mapper.RouteMapper(request.source_dir)` across `create_and_run_scan` (`POST /scans`), passing `route_mapper=mapper_instance` into `run_sast_scan`, `filter_decoys`, `run_sca_reachability`, `dast_scanner_instance.scan`, `compute_scope_reduction`, and `correlator.correlate_findings`.
+  2. `ui/index.html`:
+     - Added live `#ciGateBadge` / `#ciGateBadgeText` inside `#judgeComplexityBanner` reflecting `/scans/{id}/ci-gate` status (`CI GATE: PASS (EXIT 0)` vs `CI GATE: FAIL (EXIT 1)`).
+     - Enhanced Scan Diff (`NEW`, `FIXED`, `STILL-OPEN`) table rows with `Summary & Link Reason` and click-to-inspect drawer handlers.
+  3. `tests/test_subblock1_dast_and_db.py`:
+     - Added `test_phase4_b41_scan_diff_lifecycle_new_fixed_still_open_and_sarif_ci_gate_transition` and `test_phase4_sync2_single_pass_ast_and_unseen_polyglot_e2e`.
+- **Verification Summary:**
+  - `python -m pytest -v` -> **`51 passed` in `1.99s`**.
+  - `python -m tests.demo_checkpoint1 --full-benchmark` -> **7/7 PRD Answer-Key Metrics `PASS` (`20/20` Correct Links, `0/20` Wrong Links, `0/8` False Alarms, `100%` Dedup, `28.2 ms` runtime, `85.7%` Active HTTP Probes Saved)**.
 
