@@ -1,5 +1,5 @@
 """
-api/main.py — FastAPI Control Plane for GORDON CORRELATE (FR-8, FR-9, FR-10, B-3, B-4, B-5).
+api/main.py — FastAPI Control Plane for CYBERFORGE CORRELATE (FR-8, FR-9, FR-10, B-3, B-4, B-5).
 
 Endpoints:
   - GET  /health                   -> Liveness & target-safety-lock status
@@ -36,9 +36,9 @@ from core.schemas import (
 from engine.dast_scanner import run_dast_scan
 
 app = FastAPI(
-    title="GORDON CORRELATE — SAST & DAST Correlation Engine",
+    title="CYBERFORGE CORRELATE — SAST & DAST Correlation Engine",
     description=(
-        "Mitigata Hackathon 2026 Flagship Engine (PROBLEM 06): "
+        "Enterprise AppSec Correlation Engine (PROBLEM 06): "
         "Deterministic AST Route-to-Sink Mapper + 2-Phase Scope-Locked DAST + "
         "Zero-Wrong-Link Correlator + Idempotent SQLite Store."
     ),
@@ -56,9 +56,9 @@ _default_store: Optional[DatabaseStore] = None
 
 
 def get_store() -> DatabaseStore:
-    """Return singleton `DatabaseStore` instance (or custom path via `GORDON_DB_PATH`)."""
+    """Return singleton `DatabaseStore` instance (or custom path via `CYBERFORGE_DB_PATH` / `GORDON_DB_PATH`)."""
     global _default_store
-    current_path = os.getenv("GORDON_DB_PATH")
+    current_path = os.getenv("CYBERFORGE_DB_PATH", os.getenv("GORDON_DB_PATH"))
     if _default_store is None or (current_path and _default_store.db_path != current_path):
         _default_store = DatabaseStore(db_path=current_path)
     return _default_store
@@ -345,7 +345,7 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
     demo_sast = [
         CanonicalFinding(
             source="SAST",
-            scanner_name="gordon-sast",
+            scanner_name="core-sast",
             cwe="CWE-89",
             severity="Critical",
             file="orders.py",
@@ -357,7 +357,7 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
         ),
         CanonicalFinding(
             source="SAST",
-            scanner_name="gordon-sast",
+            scanner_name="core-sast",
             cwe="CWE-79",
             severity="High",
             file="views.py",
@@ -369,18 +369,18 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
         ),
         CanonicalFinding(
             source="SAST",
-            scanner_name="gordon-sast",
+            scanner_name="core-sast",
             cwe="CWE-798",
             severity="High",
             file="config.py",
             line=19,
             func_name="load_payment_gateway",
-            snippet="RAZORPAY_LIVE_SECRET = 'rzp_live_99a8b7c6d5e4f3'",
-            evidence="Hard-coded production API secret in config.py:19",
+            snippet="API_SECRET_KEY = os.getenv('API_SECRET_KEY', 'REDACTED')",
+            evidence="Hard-coded API secret identifier detected in config.py:19",
         ),
         CanonicalFinding(
             source="SAST",
-            scanner_name="gordon-sast",
+            scanner_name="core-sast",
             cwe="CWE-89",
             severity="Info",
             file="orders.py",
@@ -393,7 +393,7 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
         ),
         CanonicalFinding(
             source="SAST",
-            scanner_name="gordon-sast",
+            scanner_name="core-sast",
             cwe="CWE-79",
             severity="Info",
             file="views.py",
@@ -408,7 +408,7 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
     demo_dast = [
         CanonicalFinding(
             source="DAST",
-            scanner_name="gordon-dast",
+            scanner_name="core-dast",
             cwe="CWE-89",
             severity="Critical",
             url="http://localhost:5000/api/orders?id=1%27",
@@ -420,19 +420,19 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
         ),
         CanonicalFinding(
             source="DAST",
-            scanner_name="gordon-dast",
+            scanner_name="core-dast",
             cwe="CWE-79",
             severity="High",
-            url="http://localhost:5000/search?q=%3Cscript%3Egordon_canary_79%3C/script%3E",
+            url="http://localhost:5000/search?q=%3Cscript%3Ecanary_probe_79%3C/script%3E",
             method="GET",
             param="q",
-            payload="<script>gordon_canary_79</script>",
-            evidence="Raw unescaped '<script>gordon_canary_79</script>' reflected in text/html body",
+            payload="<script>canary_probe_79</script>",
+            evidence="Raw unescaped '<script>canary_probe_79</script>' reflected in text/html body",
             phase="Phase-A-Active",
         ),
         CanonicalFinding(
             source="DAST",
-            scanner_name="gordon-dast",
+            scanner_name="core-dast",
             cwe="CWE-693",
             severity="Medium",
             url="http://localhost:5000/api/orders",
@@ -443,7 +443,7 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
         ),
         CanonicalFinding(
             source="DAST",
-            scanner_name="gordon-dast",
+            scanner_name="core-dast",
             cwe="CWE-614",
             severity="Medium",
             url="http://localhost:5000/api/orders",
@@ -472,7 +472,7 @@ async def health_check() -> Dict[str, Any]:
     """Return engine status and active PRD Page 4 Rule 1 Target Safety Lock hosts."""
     return {
         "status": "ok",
-        "engine": "GORDON CORRELATE v1.0",
+        "engine": "CYBERFORGE CORRELATE v1.0",
         "target_safety_lock": {
             "enforced": True,
             "follow_redirects": False,

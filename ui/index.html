@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GORDON CORRELATE — SAST & DAST Correlation Engine | Mitigata CyberForge</title>
+  <title>CyberForge Correlate — AST & DAST Correlation Engine</title>
   <!-- Editorial Serif-Sans Hybrid + Geometric Grotesque + Monospace Fallback Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -568,7 +568,7 @@
     }
 
     /* ==========================================================================
-       7. MITIGATA GORDON AI TELEMETRY & IDEMPOTENCY PROOF STRIP
+       7. APPSEC TELEMETRY & IDEMPOTENCY PROOF STRIP
        ========================================================================== */
     .telemetry-strip {
       background: linear-gradient(180deg, #13121e 0%, #232542 100%);
@@ -1085,10 +1085,10 @@
   <header class="navbar">
     <div class="container nav-inner">
       <div class="brand-cluster">
-        <div class="brand-emblem">G</div>
+        <div class="brand-emblem">C</div>
         <div>
-          <span class="brand-name">GORDON CORRELATE</span>
-          <span class="brand-sub">Mitigata CyberForge · Deterministic SAST × DAST Engine</span>
+          <span class="brand-name">CYBERFORGE CORRELATE</span>
+          <span class="brand-sub">Deterministic AST Route-to-Sink × DAST Engine</span>
         </div>
       </div>
 
@@ -1100,12 +1100,12 @@
 
         <button class="btn-pill btn-secondary" id="btnRunIdempotency" onclick="runIdempotencyCheck()">
           <span class="btn-spotlight"></span>
-          <span>Verify FR-6 Idempotency (Run 2×)</span>
+          <span>Verify Idempotency (2×)</span>
         </button>
 
         <button class="btn-pill btn-primary" id="btnRunScan" onclick="triggerScan(false)">
           <span class="btn-spotlight"></span>
-          <span id="btnRunScanLabel">Run Correlation Scan</span>
+          <span id="btnRunScanLabel">Run Scan</span>
         </button>
       </div>
     </div>
@@ -1118,7 +1118,7 @@
         <div>
           <div class="sovereign-badge">
             <span class="sovereign-line"></span>
-            <span>Sovereign AppSec Correlation · AST Route-to-Sink × 2-Phase Differential DAST</span>
+            <span>AST Route-to-Sink × Differential DAST Correlation</span>
             <span class="sovereign-line"></span>
           </div>
           <h1 class="display-title">One Real Bug. One Confirmed Issue.</h1>
@@ -1126,7 +1126,7 @@
         <div style="text-align:right;">
           <p class="eyebrow">Active Application Scope</p>
           <p style="font-size:14px; color:var(--color-tx-secondary); font-weight:500;" id="activeScanBadge">
-            Ready · Click "Run Correlation Scan"
+            Ready · Click "Run Scan"
           </p>
         </div>
       </div>
@@ -1134,11 +1134,11 @@
       <div class="glass-bezel">
         <div class="scan-control-bar">
           <div class="input-group">
-            <label class="input-label" for="inputSourceDir">Target Source Code Path (FR-1 / FR-4 AST)</label>
+            <label class="input-label" for="inputSourceDir">Target Source Code Path</label>
             <input class="input-field" id="inputSourceDir" type="text" value="./vuln_app" placeholder="./vuln_app or ./target-app" />
           </div>
           <div class="input-group">
-            <label class="input-label" for="inputTargetUrl">Live Runtime Target URL (FR-2 Scope-Locked)</label>
+            <label class="input-label" for="inputTargetUrl">Live Runtime Target URL</label>
             <input class="input-field" id="inputTargetUrl" type="text" value="http://localhost:5000" placeholder="http://localhost:5000" />
           </div>
           <div class="input-group">
@@ -1148,11 +1148,11 @@
           <div style="display:flex; gap:8px;">
             <button class="btn-pill btn-primary" onclick="triggerScan(false)" style="min-height:38px;">
               <span class="btn-spotlight"></span>
-              <span>POST /scans</span>
+              <span>Execute Scan</span>
             </button>
-            <button class="btn-pill btn-secondary" onclick="compareLatestScans()" style="min-height:38px;" title="Bonus B-5: Diff latest two scans into NEW, FIXED, STILL-OPEN">
+            <button class="btn-pill btn-secondary" onclick="compareLatestScans()" style="min-height:38px;" title="Compare latest scans">
               <span class="btn-spotlight"></span>
-              <span>Diff Scans (B-5)</span>
+              <span>Compare Diff</span>
             </button>
           </div>
         </div>
@@ -1166,7 +1166,7 @@
         <div class="kpi-content">
           <div class="kpi-header">
             <span class="eyebrow" style="color:var(--color-sr-red-500);">Confirmed (SAST × DAST)</span>
-            <span class="badge badge-confirmed">P1 Priority</span>
+            <span class="badge badge-confirmed">P1 Confirmed</span>
           </div>
           <div class="kpi-value" id="countConfirmed">0</div>
           <div class="kpi-caption">Exploitable at Runtime & Pinned to Code Line</div>
@@ -1192,7 +1192,7 @@
         <div class="kpi-content">
           <div class="kpi-header">
             <span class="eyebrow" style="color:var(--color-sr-indigo-900);">Runtime Only (DAST)</span>
-            <span class="badge badge-runtime-only">Phase B Audit</span>
+            <span class="badge badge-runtime-only">Runtime Audit</span>
           </div>
           <div class="kpi-value" id="countRuntimeOnly">0</div>
           <div class="kpi-caption">Live HTTP Exposure Invisible to SAST</div>
@@ -1205,7 +1205,7 @@
         <div class="kpi-content">
           <div class="kpi-header">
             <span class="eyebrow" style="color:var(--color-sr-green-800);">Safe Decoys Suppressed</span>
-            <span class="badge badge-decoy">Bonus B-2</span>
+            <span class="badge badge-decoy">Verified Safe</span>
           </div>
           <div class="kpi-value" id="countDecoys">0</div>
           <div class="kpi-caption">0% False Alarms on Protected Sinks</div>
@@ -1214,7 +1214,7 @@
       </article>
     </section>
 
-    <!-- Mitigata Gordon AI Risk & Idempotency Telemetry Strip -->
+    <!-- AppSec Risk & Idempotency Telemetry Strip -->
     <section class="telemetry-strip">
       <div class="telemetry-metrics">
         <div class="telemetry-item">
@@ -1222,7 +1222,7 @@
           <span class="telemetry-val" id="telTotalIssues">0</span>
         </div>
         <div class="telemetry-item">
-          <span class="telemetry-label">AST Routes Mapped (FR-4)</span>
+          <span class="telemetry-label">AST Routes Mapped</span>
           <span class="telemetry-val" id="telRoutesCount">0</span>
         </div>
         <div class="telemetry-item">
@@ -1230,7 +1230,7 @@
           <span class="telemetry-val" style="color:var(--color-sr-green-300);">0.0% (&lt; 5% Target)</span>
         </div>
         <div class="telemetry-item">
-          <span class="telemetry-label">FAIR Financial Exposure</span>
+          <span class="telemetry-label">Estimated Risk Exposure</span>
           <span class="telemetry-val" style="color:var(--color-sr-orange-300);" id="telFairRisk">₹0.0 L</span>
         </div>
         <div class="telemetry-item">
@@ -1239,7 +1239,7 @@
         </div>
       </div>
       <div style="font-size:12px; color:var(--color-sr-indigo-200); font-family:var(--font-mono);" id="idempotencyStatus">
-        FR-6 Idempotent Fingerprint Store Active
+        Deterministic Fingerprint Store · Active
       </div>
     </section>
 
@@ -1248,26 +1248,26 @@
       <div class="workspace-toolbar">
         <div class="tab-group" role="tablist">
           <button class="tab-btn active" id="tabBtn-issues" onclick="switchTab('issues')">
-            <span>Prioritised Issues (FR-9)</span>
+            <span>Prioritised Issues</span>
             <span class="tab-count" id="tabCountIssues">0</span>
           </button>
           <button class="tab-btn" id="tabBtn-routes" onclick="switchTab('routes')">
-            <span>AST Route Map (FR-4)</span>
+            <span>AST Route Map</span>
             <span class="tab-count" id="tabCountRoutes">0</span>
           </button>
           <button class="tab-btn" id="tabBtn-decoys" onclick="switchTab('decoys')">
-            <span>Suppressed Safe Decoys (B-2)</span>
+            <span>Suppressed Safe Decoys</span>
             <span class="tab-count" id="tabCountDecoys">0</span>
           </button>
           <button class="tab-btn" id="tabBtn-diff" onclick="switchTab('diff')">
-            <span>Scan Diff (B-5)</span>
+            <span>Scan Diff</span>
             <span class="tab-count" id="tabCountDiff">0</span>
           </button>
         </div>
 
         <div class="filter-cluster" id="issueFiltersBar">
           <select class="select-pill" id="filterStatus" onchange="renderIssuesList()">
-            <option value="">All Buckets (FR-7)</option>
+            <option value="">All Categories</option>
             <option value="Confirmed">Confirmed Only</option>
             <option value="Code only">Code only</option>
             <option value="Runtime only">Runtime only</option>
@@ -1702,7 +1702,7 @@
       document.getElementById('sheetTitle').textContent = issue.title;
 
       const sastSnippets = (issue.sast_evidence || []).map(sf =>
-        `// Scanner: ${sf.scanner_name || 'gordon-sast'} | ${sf.file || ''}:${sf.line || ''}\n${sf.snippet || sf.evidence || ''}`
+        `// Scanner: ${sf.scanner_name || 'core-sast'} | ${sf.file || ''}:${sf.line || ''}\n${sf.snippet || sf.evidence || ''}`
       ).join('\n\n') || (issue.code_snippet || '// No static source sink (Runtime-only exposure)');
 
       const dastProofs = (issue.dast_evidence || []).map(df =>
@@ -1712,7 +1712,7 @@
       document.getElementById('sheetBody').innerHTML = `
         <!-- Mandatory 8 FR-8 Fields Matrix -->
         <div>
-          <p class="eyebrow" style="margin-bottom:8px;">FR-8 Mandatory Unified Evidence Fields (GET /issues/${issue.id})</p>
+          <p class="eyebrow" style="margin-bottom:8px;">Unified Evidence Matrix</p>
           <div class="fr8-grid">
             <div class="fr8-cell">
               <div class="fr8-cell-label">1. URL</div>
@@ -1751,7 +1751,7 @@
 
         <!-- B-3 Deterministic Correlation Formula Explanation -->
         <div class="b3-link-banner" style="margin-top:0;">
-          <strong>Bonus B-3 Correlation Proof:</strong>
+          <strong>Deterministic Correlation Proof:</strong>
           <span>${escapeHtml(issue.link_reason)}</span>
         </div>
 
@@ -1777,8 +1777,8 @@
         <!-- Bonus B-4 Plain-English Fix Suggestion & Compliance Impact -->
         <div class="fix-card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span class="eyebrow" style="color:var(--color-sr-green-800);">Bonus B-4 · Plain-English Remediation & Secure Code Pattern</span>
-            <span class="badge badge-decoy">SEBI CSCRF SLA: ${issue.sebi_cscrf_sla_days || issue.sebi_sla_days || 7} Days · FAIR Exposure: ₹${Number(issue.fair_exposure_inr_lakhs ?? issue.fair_risk_inr_lakhs ?? 0).toFixed(1)}L</span>
+            <span class="eyebrow" style="color:var(--color-sr-green-800);">Remediation & Secure Code Pattern</span>
+            <span class="badge badge-decoy">Remediation SLA: ${issue.sebi_cscrf_sla_days || issue.sebi_sla_days || 7} Days</span>
           </div>
           <p style="font-size:14px; color:var(--color-sr-green-900); font-weight:500; line-height:1.55;">
             ${escapeHtml(issue.fix_suggestion)}
@@ -1833,19 +1833,19 @@
         showToast(`Request error: ${err.message}`);
         return null;
       } finally {
-        label.textContent = 'Run Correlation Scan';
+        label.textContent = 'Run Scan';
         btn.disabled = false;
       }
     }
 
     async function runIdempotencyCheck() {
-      showToast('Running 2 consecutive scans to verify FR-6 idempotency…');
+      showToast('Running 2 consecutive scans to verify idempotency…');
       const first = await triggerScan(true);
       if (!first) return;
       const second = await triggerScan(true);
       if (!second) return;
 
-      const msg = `FR-6 Verified: Scan #${first.scan_id} (${first.total_issues} issues) → Scan #${second.scan_id} (${second.total_issues} issues, 0 duplicates created!)`;
+      const msg = `Idempotency Verified: Scan #${first.scan_id} (${first.total_issues} issues) → Scan #${second.scan_id} (${second.total_issues} issues, 0 duplicates created)`;
       document.getElementById('idempotencyStatus').textContent = msg;
       showToast(msg);
     }

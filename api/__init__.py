@@ -1,1 +1,1 @@
-"""FastAPI backend, SQLite idempotent store, and exporters for GORDON CORRELATE."""
+"""FastAPI backend, SQLite idempotent store, and exporters for CYBERFORGE CORRELATE."""

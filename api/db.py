@@ -29,7 +29,7 @@ from core.schemas import (
     compute_issue_risk_score,
 )
 
-DEFAULT_DB_PATH = os.getenv("GORDON_DB_PATH", os.path.join(os.getcwd(), "gordon_correlate.db"))
+DEFAULT_DB_PATH = os.getenv("CYBERFORGE_DB_PATH", os.getenv("GORDON_DB_PATH", os.path.join(os.getcwd(), "cyberforge_correlate.db")))
 
 STATUS_SORT_ORDER_SQL = """
 CASE status
