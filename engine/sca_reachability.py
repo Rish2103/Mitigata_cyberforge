@@ -24,6 +24,7 @@ from core.schemas import (
     SBOMDependency,
     VulnerabilityAdvisory,
     SCAReachabilityFinding,
+    SCAFinding,
     SupplyChainAlert,
     SCAReport,
     Severity,
@@ -396,9 +397,16 @@ class _PythonImportAndCallAnalyzer(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         enclosing = self._func_stack[-1] if self._func_stack else "<module>"
 
-        # Check dynamic imports: importlib.import_module(...) or __import__(...)
+        # Check dynamic imports or reflection: importlib.import_module(...), __import__(...), or getattr(...)
         if isinstance(node.func, ast.Name) and node.func.id == "__import__":
             self.has_dynamic_import = True
+        elif isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            if node.args and isinstance(node.args[0], ast.Name):
+                target_id = node.args[0].id
+                if target_id in self.alias_to_module or target_id not in ("self", "cls", "request", "app"):
+                    self.has_dynamic_import = True
+            else:
+                self.has_dynamic_import = True
         elif isinstance(node.func, ast.Attribute) and node.func.attr == "import_module":
             self.has_dynamic_import = True
 
@@ -839,9 +847,12 @@ class SCAReachabilityEngine:
         """
         for r in self.route_mapper.routes:
             if self.route_mapper.is_line_in_route(file_path, line, r, max_hops=3):
-                chain = [f"{r.method} {r.path_pattern} -> {r.func_name}() ({r.file_path}:{r.start_line})"]
+                chain = [
+                    f"{r.method} {r.path_pattern}",
+                    f"{r.file_path}:{r.func_name}() [line {r.start_line}]",
+                ]
                 if func_name not in (r.func_name, "<module>", "<js_handler>"):
-                    chain.append(f"{func_name}() ({file_path}:{line})")
+                    chain.append(f"{file_path}:{func_name}() [line {line}]")
                 return r, chain
         return None, []
 
@@ -907,7 +918,7 @@ class SCAReachabilityEngine:
                             # Check if this call line is reachable from routes (or if app has no routes, module-level)
                             if self.route_mapper.is_line_reachable(call_file, call_line):
                                 route_obj, route_chain = self._trace_route_to_function(call_file, enc_func, call_line)
-                                full_chain = route_chain + [f"{call_mod}.{call_sym}() ({call_file}:{call_line})"]
+                                full_chain = route_chain + [f"{call_mod}.{call_sym}() [line {call_line}]"]
                                 reachable_hit = (
                                     call_file,
                                     call_line,
@@ -1101,3 +1112,119 @@ class SCAReachabilityEngine:
                 )
 
         return alerts
+
+
+SCAReachabilityScanner = SCAReachabilityEngine
+
+
+def _format_supply_chain_flag(alert: SupplyChainAlert) -> str:
+    if alert.alert_type == "typosquat":
+        return f"TYPOSQUAT_SUSPECT: {alert.package} -> {alert.target_legit_package} (distance=1)"
+    if alert.alert_type == "dependency_confusion":
+        return f"DEPENDENCY_CONFUSION: {alert.package} ({alert.source_file})"
+    if alert.alert_type == "unpinned_lockfile":
+        return f"UNPINNED_VERSION: {alert.package} ({alert.version})"
+    if alert.alert_type == "malicious_package":
+        return f"MALICIOUS_PACKAGE: {alert.package} ({alert.source_file})"
+    return f"{alert.alert_type.upper()}: {alert.package}"
+
+
+def run_sca_reachability(
+    source_dir: str,
+    routes: Optional[List[RouteEntry]] = None,
+    route_mapper: Optional[RouteMapper] = None,
+) -> List[SCAFinding]:
+    """
+    Top-level bridge function invoked by `api/main.py` and CLI runners.
+    Executes the 5-Step Reachability-Aware SCA Engine and returns `List[SCAFinding]`
+    with human-readable `call_chain` and `supply_chain_flags`.
+    """
+    mapper = route_mapper
+    if mapper is None:
+        mapper = RouteMapper(source_dir)
+        mapper.scan()
+    elif routes and not mapper.routes:
+        mapper.routes = list(routes)
+
+    engine = SCAReachabilityEngine(source_dir, route_mapper=mapper)
+    report = engine.analyze_reachability()
+
+    alert_flags_by_pkg: Dict[str, List[str]] = {}
+    alerts_by_pkg: Dict[str, List[SupplyChainAlert]] = {}
+    for alert in report.supply_chain_alerts:
+        pkg_key = alert.package.lower()
+        alerts_by_pkg.setdefault(pkg_key, []).append(alert)
+        flags = alert_flags_by_pkg.setdefault(pkg_key, [])
+        formatted = _format_supply_chain_flag(alert)
+        if formatted not in flags:
+            flags.append(formatted)
+        if alert.alert_type not in flags:
+            flags.append(alert.alert_type)
+
+    sca_findings: List[SCAFinding] = []
+    seen_pkgs: Set[str] = set()
+
+    for rf in report.findings:
+        pkg_key = rf.package.lower()
+        seen_pkgs.add(pkg_key)
+        fn_source = "osv_symbols" if rf.vulnerable_functions else "none_unknown"
+        sca_findings.append(
+            SCAFinding(
+                id=rf.id,
+                package_name=rf.package,
+                installed_version=rf.installed_version,
+                ecosystem="PyPI" if rf.ecosystem.lower() == "pypi" else rf.ecosystem,
+                is_direct=len(rf.transitive_path) <= 2,
+                dependency_path=rf.transitive_path,
+                advisory_id=rf.advisory_id,
+                cve_id=rf.cve_id,
+                original_severity=rf.original_severity,
+                effective_severity=rf.effective_severity,
+                cvss_score=rf.cvss_score,
+                epss_score=rf.epss_score,
+                in_cisa_kev=rf.is_kev,
+                fixed_version=rf.fixed_version,
+                vulnerable_functions=rf.vulnerable_functions,
+                function_map_source=fn_source,
+                reachability_status=rf.status,
+                call_chain=rf.call_chain,
+                supply_chain_flags=alert_flags_by_pkg.get(pkg_key, []),
+            )
+        )
+
+    # Also surface standalone supply-chain alerts (typosquats, dependency confusion, malicious packages)
+    sbom_by_pkg = {d.name.lower(): d for d in report.sbom}
+    for pkg_key, pkg_alerts in alerts_by_pkg.items():
+        if pkg_key in seen_pkgs:
+            continue
+        primary_alert = pkg_alerts[0]
+        dep = sbom_by_pkg.get(pkg_key)
+        sca_findings.append(
+            SCAFinding(
+                id=primary_alert.id,
+                package_name=primary_alert.package,
+                installed_version=primary_alert.version or (dep.version if dep else "unpinned"),
+                ecosystem="PyPI" if (dep is None or dep.ecosystem.lower() == "pypi") else dep.ecosystem,
+                is_direct=dep.is_direct if dep else True,
+                dependency_path=dep.transitive_path if dep else ["root", pkg_key],
+                advisory_id=primary_alert.id,
+                cve_id=None,
+                original_severity=primary_alert.severity,
+                effective_severity=primary_alert.severity,
+                cvss_score=9.0 if primary_alert.severity == Severity.CRITICAL else (7.5 if primary_alert.severity == Severity.HIGH else 5.0),
+                epss_score=0.0,
+                in_cisa_kev=False,
+                fixed_version=primary_alert.target_legit_package,
+                vulnerable_functions=[],
+                function_map_source="none_unknown",
+                reachability_status=SCAReachabilityStatus.UNKNOWN,
+                call_chain=[],
+                supply_chain_flags=alert_flags_by_pkg.get(pkg_key, []),
+            )
+        )
+
+    for sf in sca_findings:
+        sf.__dict__.update({"package": sf.package_name, "status": sf.reachability_status})
+
+    return sca_findings
+

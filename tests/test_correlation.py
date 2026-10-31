@@ -637,7 +637,187 @@ mod = importlib.import_module("pyyaml")
         extracted_syms = SCAReachabilityEngine.parse_fix_commit_diff(diff_text)
         self.assertIn("parse_token", extracted_syms)
 
+    # =========================================================================
+    # 6. Multi-Scanner Fixture Files (FR-3 & FR-6: 4 Raw Findings -> 1 Issue)
+    # =========================================================================
+    def test_mock_shop_multi_scanner_fixture_files_4_to_1_dedup(self):
+        """
+        Task A3.2: Ingests real fixture files `tests/mock_shop_app/reports/semgrep_sample.sarif`
+        and `tests/mock_shop_app/reports/bandit_sample.json` alongside AST SAST and DAST,
+        proving that 4 raw findings (AST Scanner + Semgrep SARIF + Bandit JSON + DAST)
+        on `services/order_service.py` line 25 collapse into 1 single `Confirmed` CorrelatedIssue.
+        Also verifies Person A <-> Person B bridge attributes on CorrelatedIssue.
+        """
+        from engine.sast_scanner import run_sast_scan
+        from engine.correlator import correlate_findings
+
+        mapper = RouteMapper(MOCK_SHOP_DIR)
+        routes = mapper.scan()
+        scanner = SASTScanner(MOCK_SHOP_DIR, route_mapper=mapper)
+        ast_sast = run_sast_scan(MOCK_SHOP_DIR, routes=routes, route_mapper=mapper)
+
+        sarif_path = os.path.join(MOCK_SHOP_DIR, "reports", "semgrep_sample.sarif")
+        bandit_path = os.path.join(MOCK_SHOP_DIR, "reports", "bandit_sample.json")
+        self.assertTrue(os.path.isfile(sarif_path))
+        self.assertTrue(os.path.isfile(bandit_path))
+
+        with open(sarif_path, "r", encoding="utf-8") as f:
+            sarif_findings = scanner.ingest_sarif(json.load(f), route_mapper=mapper)
+        with open(bandit_path, "r", encoding="utf-8") as f:
+            bandit_findings = scanner.ingest_bandit_json(json.load(f), route_mapper=mapper)
+
+        self.assertEqual(len(sarif_findings), 2)
+        self.assertEqual(len(bandit_findings), 3)
+
+        all_sast = ast_sast + sarif_findings + bandit_findings
+        dast = [
+            CanonicalFinding(
+                id="dast_order_sqli_live",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                title="Live DAST SQLi on /api/orders",
+                url="http://localhost:5000/api/orders?id=1'",
+                method="GET",
+                param="id",
+                payload="1' OR '1'='1",
+                evidence="sqlite3.OperationalError: near \"'1'\"",
+            )
+        ]
+
+        issues = correlate_findings(routes, all_sast, dast, source_dir=MOCK_SHOP_DIR, route_mapper=mapper)
+        order_sqli_issues = [
+            i for i in issues
+            if i.status == IssueStatus.CONFIRMED
+            and i.cwe == "CWE-89"
+            and "order_service.py" in (i.file_path or "")
+        ]
+        self.assertEqual(len(order_sqli_issues), 1, "Must collapse all 4 findings into 1 single Confirmed issue")
+        issue = order_sqli_issues[0]
+        self.assertEqual(issue.finding_count, 4)
+        formats = {f.raw_details.get("format", "ast") for f in issue.sast_evidence}
+        self.assertEqual(formats, {"ast", "sarif", "bandit"})
+        self.assertEqual(len(issue.dast_evidence), 1)
+
+        # Verify Person B bridge attributes
+        self.assertTrue(getattr(issue, "remediation", ""))
+        self.assertIn("Before:", getattr(issue, "remediation", ""))
+        self.assertIn("After:", getattr(issue, "remediation", ""))
+        self.assertTrue(getattr(issue, "remediation_code_diff", ""))
+        self.assertIn("--- a/", issue.remediation_code_diff)
+        self.assertIn("+++ b/", issue.remediation_code_diff)
+        self.assertIn(getattr(issue, "confidence", ""), ("HIGH", 0.9, 1.0))
+        self.assertEqual(len(getattr(issue, "sast_finding_ids", [])), 3)
+        self.assertEqual(len(getattr(issue, "dast_finding_ids", [])), 1)
+        self.assertTrue(len(getattr(issue, "signals_matched", [])) >= 3)
+
+    # =========================================================================
+    # 7. Same-Route Multi-Parameter Disambiguation (/search?q=XSS&sort=SQLi)
+    # =========================================================================
+    def test_same_route_multi_parameter_disambiguation_xss_and_sqli(self):
+        """
+        Task A4.1: Route `/search?q=...&sort=...` where `q` is vulnerable to XSS (CWE-79)
+        and `sort` is vulnerable to SQLi (CWE-89). Verifies Correlator produces 2 distinct
+        Confirmed issues and NEVER cross-links them.
+        """
+        app_code = '''
+import sqlite3
+from flask import Flask, request, make_response
+
+app = Flask(__name__)
+
+@app.route("/search", methods=["GET"])
+def multi_param_search():
+    q = request.args.get("q", "")
+    sort = request.args.get("sort", "id")
+    conn = sqlite3.connect(":memory:")
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM products ORDER BY {sort}")
+    return make_response(f"<div>Results for {q}</div>")
+'''
+        with open(os.path.join(self.temp_dir, "app.py"), "w", encoding="utf-8") as f:
+            f.write(app_code)
+
+        mapper = RouteMapper(self.temp_dir)
+        routes = mapper.scan()
+        scanner = SASTScanner(self.temp_dir, route_mapper=mapper)
+        sast = scanner.scan(route_mapper=mapper)
+
+        dast = [
+            CanonicalFinding(
+                id="dast_search_xss",
+                source=FindingSource.DAST,
+                cwe="CWE-79",
+                severity=Severity.HIGH,
+                url="http://localhost:5000/search?q=<script>alert(1)</script>&sort=id",
+                method="GET",
+                param="q",
+                payload="<script>alert(1)</script>",
+            ),
+            CanonicalFinding(
+                id="dast_search_sqli",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://localhost:5000/search?q=shoes&sort=id;DROP TABLE products--",
+                method="GET",
+                param="sort",
+                payload="id;DROP TABLE products--",
+            ),
+        ]
+
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast, dast)
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 2)
+        by_cwe = {i.cwe: i for i in confirmed}
+        self.assertIn("CWE-79", by_cwe)
+        self.assertIn("CWE-89", by_cwe)
+        self.assertEqual(by_cwe["CWE-79"].param, "q")
+        self.assertEqual(by_cwe["CWE-89"].param, "sort")
+        # Ensure zero cross-contamination of findings
+        self.assertEqual(by_cwe["CWE-79"].dast_evidence[0].id, "dast_search_xss")
+        self.assertEqual(by_cwe["CWE-89"].dast_evidence[0].id, "dast_search_sqli")
+
+    # =========================================================================
+    # 8. Top-Level Bridge Functions & Enriched SCA Call Chain / Supply Chain Flags
+    # =========================================================================
+    def test_top_level_bridges_and_run_sca_reachability(self):
+        """
+        Tasks A2.1 & A3.3: Verifies `build_dast_probe_plan`, `RuntimeScopeReducer`,
+        `DASTProbePlan`, and `run_sca_reachability(MOCK_SHOP_DIR)` with human-readable
+        `call_chain` and `supply_chain_flags`.
+        """
+        from engine.scope_reducer import build_dast_probe_plan, RuntimeScopeReducer, DASTProbePlan
+        from engine.sast_scanner import run_sast_scan
+        from engine.sca_reachability import run_sca_reachability, SCAReachabilityScanner
+
+        self.assertIsNotNone(RuntimeScopeReducer)
+        self.assertIsNotNone(DASTProbePlan)
+        self.assertIsNotNone(SCAReachabilityScanner)
+
+        mapper = RouteMapper(MOCK_SHOP_DIR)
+        routes = mapper.scan()
+        sast = run_sast_scan(MOCK_SHOP_DIR, routes=routes, route_mapper=mapper)
+        plan = build_dast_probe_plan(routes, sast, route_mapper=mapper)
+        self.assertGreater(plan.scope_reduction_pct, 30.0)
+        self.assertGreater(len(plan.route_entries), 0)
+
+        sca_findings = run_sca_reachability(MOCK_SHOP_DIR, routes=routes, route_mapper=mapper)
+        self.assertGreaterEqual(len(sca_findings), 3)
+        by_pkg = {f.package_name: f for f in sca_findings}
+        self.assertIn("pyyaml", by_pkg)
+        pyyaml_f = by_pkg["pyyaml"]
+        self.assertEqual(pyyaml_f.reachability_status, SCAReachabilityStatus.REACHABLE)
+        self.assertTrue(any("POST /api/config/import" in step for step in pyyaml_f.call_chain))
+        self.assertTrue(any("import_yaml_config()" in step and "[line " in step for step in pyyaml_f.call_chain))
+        self.assertTrue(any("yaml.load()" in step and "[line " in step for step in pyyaml_f.call_chain))
+        all_flags = [fl for f in sca_findings for fl in f.supply_chain_flags]
+        self.assertTrue(any("TYPOSQUAT_SUSPECT: reqeusts -> requests (distance=1)" in fl for fl in all_flags))
+        self.assertTrue(any("DEPENDENCY_CONFUSION: mitigata-internal-auth" in fl for fl in all_flags))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

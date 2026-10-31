@@ -81,57 +81,84 @@ class DecoyFilter:
 
     @staticmethod
     def is_safe_sql_query(
-        call_node: ast.Call,
+        call_node: Optional[ast.Call] = None,
         enclosing_code: str = "",
         var_defs: Optional[Dict[str, ast.AST]] = None,
     ) -> Tuple[bool, str]:
         """
-        Detects parameterized SQL queries or strict int() cast guards:
+        Detects parameterized SQL queries, ORM filter builders, or strict int() cast guards:
         cursor.execute(sql, (param,))
         cursor.execute(sql, [param])
         cursor.execute(sql, {'param': val})
         db.session.execute(text(sql), params)
         cursor.execute(f"SELECT * FROM t WHERE id = {int(uid)}")
+        User.query.filter_by(username=user_input)
+        Order.objects.filter(id=order_id)
         """
-        if len(call_node.args) >= 2:
-            arg1 = call_node.args[0]
-            arg2 = call_node.args[1]
-            if isinstance(arg2, (ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Call)):
-                if not DecoyFilter._is_ast_node_dynamic_string(arg1, var_defs):
-                    return True, "Safe parameterized SQL query: SQL template and bound parameters passed separately"
+        code_lower = enclosing_code.lower()
+        if ".filter_by(" in code_lower or ".objects.filter(" in code_lower or "session.query(" in code_lower and ".filter_by(" in code_lower:
+            return True, "Safe ORM query: SQLAlchemy .filter_by() / Django ORM .filter() binds parameters safely"
 
-        for kw in call_node.keywords:
-            if kw.arg in ("params", "parameters", "args", "bind_params"):
-                if call_node.args and not DecoyFilter._is_ast_node_dynamic_string(call_node.args[0], var_defs):
-                    return True, "Safe parameterized SQL query with explicit parameters keyword argument"
+        if call_node is not None:
+            if isinstance(call_node.func, ast.Attribute) and call_node.func.attr in ("filter_by", "filter"):
+                if call_node.keywords and not call_node.args:
+                    return True, "Safe ORM query: keyword-bound ORM filter (.filter_by / .filter)"
 
-        if call_node.args and DecoyFilter._all_interpolations_int_casted(call_node.args[0], var_defs, enclosing_code):
-            return True, "Safe SQL query: interpolated parameter strictly cast via int() guard"
+            if len(call_node.args) >= 2:
+                arg1 = call_node.args[0]
+                arg2 = call_node.args[1]
+                if isinstance(arg2, (ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Call)):
+                    if not DecoyFilter._is_ast_node_dynamic_string(arg1, var_defs):
+                        return True, "Safe parameterized SQL query: SQL template and bound parameters passed separately"
+
+            for kw in call_node.keywords:
+                if kw.arg in ("params", "parameters", "args", "bind_params"):
+                    if call_node.args and not DecoyFilter._is_ast_node_dynamic_string(call_node.args[0], var_defs):
+                        return True, "Safe parameterized SQL query with explicit parameters keyword argument"
+
+            if call_node.args and DecoyFilter._all_interpolations_int_casted(call_node.args[0], var_defs, enclosing_code):
+                return True, "Safe SQL query: interpolated parameter strictly cast via int() guard"
 
         return False, ""
 
     @staticmethod
-    def is_safe_subprocess(call_node: ast.Call, enclosing_code: str = "") -> Tuple[bool, str]:
+    def is_safe_subprocess(call_node: Optional[ast.Call] = None, enclosing_code: str = "") -> Tuple[bool, str]:
         """
         Detects safe command execution:
         - subprocess.run(['ls', '-l'], shell=False)
         - shlex.quote(user_input) used to sanitize shell arguments
         """
-        has_shell_true = False
-        for kw in call_node.keywords:
-            if kw.arg == "shell":
-                if isinstance(kw.value, ast.Constant) and kw.value.value is True:
-                    has_shell_true = True
-                elif isinstance(kw.value, ast.Name) and kw.value.id == "True":
-                    has_shell_true = True
+        if call_node is None and enclosing_code.strip():
+            try:
+                tree = ast.parse(enclosing_code.strip())
+                for n in ast.walk(tree):
+                    if isinstance(n, ast.Call):
+                        call_node = n
+                        break
+            except Exception:
+                call_node = None
 
-        if call_node.args and isinstance(call_node.args[0], (ast.List, ast.Tuple)):
-            if not has_shell_true:
-                return True, "Safe command execution: argument vector array used with shell=False"
+        has_shell_true = False
+        if call_node is not None:
+            for kw in call_node.keywords:
+                if kw.arg == "shell":
+                    if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                        has_shell_true = True
+                    elif isinstance(kw.value, ast.Name) and kw.value.id == "True":
+                        has_shell_true = True
+
+            if call_node.args and isinstance(call_node.args[0], (ast.List, ast.Tuple)):
+                if not has_shell_true:
+                    return True, "Safe command execution: argument vector array used with shell=False"
 
         code_lower = enclosing_code.lower()
         if "shlex.quote(" in code_lower or "pipes.quote(" in code_lower:
             return True, "Safe command execution: dynamic argument escaped via shlex.quote()"
+        if "execfile(" in code_lower:
+            return True, "Safe command execution: arguments passed safely via execFile without shell interpretation"
+        if re.search(r"subprocess\.(?:run|popen|call|check_output|check_call)\s*\(\s*\[", code_lower):
+            if not re.search(r"shell\s*=\s*true", code_lower):
+                return True, "Safe command execution: argument vector array used with shell=False"
 
         return False, ""
 
@@ -156,14 +183,18 @@ class DecoyFilter:
     @staticmethod
     def is_safe_path_traversal(call_node: Optional[ast.Call] = None, enclosing_code: str = "") -> Tuple[bool, str]:
         """
-        Detects safe file access protected by secure_filename, os.path.realpath prefix check,
-        os.path.abspath check, os.path.basename, or path.basename.
+        Detects safe file access protected by secure_filename, safe_join, pathlib.Path.resolve().is_relative_to(),
+        os.path.realpath prefix check, os.path.abspath check, os.path.basename, or path.basename.
         """
         code_lower = enclosing_code.lower()
         if "secure_filename(" in code_lower:
             return True, "Safe file operation: input sanitized via werkzeug.utils.secure_filename"
+        if "safe_join(" in code_lower:
+            return True, "Safe file operation: path joined safely via werkzeug.security.safe_join"
+        if "is_relative_to(" in code_lower:
+            return True, "Safe file operation: canonicalized path verified via pathlib.Path.resolve().is_relative_to()"
         if ("os.path.realpath" in code_lower or "path.resolve(" in code_lower or ".resolve()" in code_lower) and (
-            "startswith" in code_lower or "commonpath" in code_lower
+            "startswith" in code_lower or "commonpath" in code_lower or "is_relative_to" in code_lower
         ):
             return True, "Safe file operation: canonicalized path validated with prefix/startswith guard"
         if "os.path.abspath" in code_lower and ("startswith" in code_lower or "commonpath" in code_lower):
@@ -177,15 +208,15 @@ class DecoyFilter:
     def is_safe_redirect(call_node: Optional[ast.Call] = None, enclosing_code: str = "") -> Tuple[bool, str]:
         """
         Detects safe redirect guarded by host allowlist, url_has_allowed_host_and_scheme,
-        urlparse().netloc validation, or startswith('/').
+        urlparse().netloc / urlsplit().netloc validation, or startswith('/').
         """
         code_lower = enclosing_code.lower()
         if "url_has_allowed_host_and_scheme" in code_lower or "is_safe_url" in code_lower:
             return True, "Safe open redirect: target URL validated against host allowlist"
         if "startswith('/')" in code_lower or 'startswith("/")' in code_lower:
             return True, "Safe open redirect: target restricted strictly to local relative paths"
-        if "urlparse(" in code_lower and "netloc" in code_lower:
-            return True, "Safe open redirect: target URL netloc/domain verified via urlparse"
+        if ("urlparse(" in code_lower or "urlsplit(" in code_lower) and "netloc" in code_lower:
+            return True, "Safe open redirect: target URL netloc/domain verified via urlparse/urlsplit"
         if "allowed_hosts" in code_lower or "allowed_domains" in code_lower or "whitelist" in code_lower:
             return True, "Safe open redirect: target validated against explicit domain allowlist"
 
@@ -208,10 +239,22 @@ class DecoyFilter:
         if finding.is_protected_decoy:
             return finding
 
-        context_text = enclosing_snippet or (finding.code_snippet or "")
+        context_text = enclosing_snippet or (finding.code_snippet or finding.snippet or "")
+        if call_node is None and context_text.strip():
+            for candidate_line in [context_text.strip()] + [ln.strip() for ln in context_text.splitlines() if ln.strip()]:
+                try:
+                    tree = ast.parse(candidate_line)
+                    for n in ast.walk(tree):
+                        if isinstance(n, ast.Call):
+                            call_node = n
+                            break
+                    if call_node is not None:
+                        break
+                except Exception:
+                    continue
 
         # 1. SQL Injection (CWE-89)
-        if finding.cwe == "CWE-89" and call_node:
+        if finding.cwe == "CWE-89":
             is_safe, reason = cls.is_safe_sql_query(call_node, context_text)
             if is_safe:
                 finding.is_protected_decoy = True
@@ -220,15 +263,10 @@ class DecoyFilter:
 
         # 2. Command Injection (CWE-78)
         if finding.cwe == "CWE-78":
-            if call_node:
-                is_safe, reason = cls.is_safe_subprocess(call_node, context_text)
-                if is_safe:
-                    finding.is_protected_decoy = True
-                    finding.decoy_reason = reason
-                    return finding
-            elif "shlex.quote(" in context_text.lower() or "execfile(" in context_text.lower():
+            is_safe, reason = cls.is_safe_subprocess(call_node, context_text)
+            if is_safe:
                 finding.is_protected_decoy = True
-                finding.decoy_reason = "Safe command execution: arguments passed safely without shell interpretation"
+                finding.decoy_reason = reason
                 return finding
 
         # 3. Cross-Site Scripting (CWE-79)
@@ -292,6 +330,10 @@ def filter_decoys(
     HTML escaping, path canonicalization, safe redirect allowlists, and dead-code reachability).
     """
     active_mapper = route_mapper if (route_mapper is not None and getattr(route_mapper, "_has_scanned_files", False)) else None
+    if active_mapper is None and routes:
+        from engine.route_mapper import RouteMapper
+
+        active_mapper = RouteMapper.from_routes(routes)
     reachable_files = active_mapper.get_reachable_files() if active_mapper is not None else None
 
     filtered: list[CanonicalFinding] = []

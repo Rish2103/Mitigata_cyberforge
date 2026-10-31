@@ -257,17 +257,38 @@ class RouteExtractor(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    @staticmethod
+    def _extract_view_target(expr: ast.AST) -> Optional[str]:
+        if isinstance(expr, ast.Name):
+            return expr.id
+        if isinstance(expr, ast.Attribute):
+            return expr.attr
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and expr.func.attr == "as_view":
+            receiver = expr.func.value
+            if isinstance(receiver, ast.Name):
+                return f"ClassView:{receiver.id}"
+            if isinstance(receiver, ast.Attribute):
+                return f"ClassView:{receiver.attr}"
+        return None
+
     def visit_Call(self, node: ast.Call):
         # Detect Flask app.add_url_rule('/orders', 'orders', get_orders, methods=['GET'])
+        # or app.add_url_rule('/users', view_func=UserAPI.as_view('user_api'))
         if isinstance(node.func, ast.Attribute) and node.func.attr == "add_url_rule":
             if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                 path = node.args[0].value
+                if isinstance(node.func.value, ast.Name):
+                    bp_name = node.func.value.id
+                    if bp_name in self.blueprint_prefixes and self.blueprint_prefixes[bp_name]:
+                        bp_prefix = self.blueprint_prefixes[bp_name].rstrip("/")
+                        if not path.startswith(bp_prefix + "/") and path != bp_prefix:
+                            path = f"{bp_prefix}/{path.lstrip('/')}"
                 view_func = None
-                if len(node.args) >= 3 and isinstance(node.args[2], ast.Name):
-                    view_func = node.args[2].id
+                if len(node.args) >= 3:
+                    view_func = self._extract_view_target(node.args[2])
                 for kw in node.keywords:
-                    if kw.arg == "view_func" and isinstance(kw.value, ast.Name):
-                        view_func = kw.value.id
+                    if kw.arg == "view_func":
+                        view_func = self._extract_view_target(kw.value) or view_func
                 if view_func:
                     self.django_Pending_routes.append((path, view_func, "flask"))
         self.generic_visit(node)
@@ -285,11 +306,7 @@ class RouteExtractor(ast.NodeVisitor):
             if isinstance(elt.args[0], ast.Constant) and isinstance(elt.args[0].value, str):
                 raw_path = elt.args[0].value
                 view_arg = elt.args[1]
-                target_func = ""
-                if isinstance(view_arg, ast.Name):
-                    target_func = view_arg.id
-                elif isinstance(view_arg, ast.Attribute):
-                    target_func = view_arg.attr
+                target_func = self._extract_view_target(view_arg) or ""
                 if target_func:
                     self.django_Pending_routes.append((raw_path, target_func, "django"))
 
@@ -414,8 +431,11 @@ class RouteMapper:
         self._global_router_prefixes: Dict[str, str] = {}
         self._router_def_prefixes: Dict[str, str] = {}
         self._router_mount_prefixes: Dict[str, str] = {}
+        self._router_def_files: Dict[str, Set[str]] = {}
+        self._router_parent_edges: List[Tuple[str, str, str]] = []
         self._pydantic_models: Dict[str, List[str]] = {}
         self._pending_view_routes: List[Tuple[str, str, str]] = []
+        self._class_views: Dict[str, List[Tuple[str, str, str, int, int, Set[str], Set[str]]]] = {}
         self._has_scanned_files: bool = False
 
     @classmethod
@@ -452,6 +472,16 @@ class RouteMapper:
         """Alias for `scan()` used by CLI and integration runners."""
         return self.scan()
 
+    @staticmethod
+    def _join_prefixes(*parts: str) -> str:
+        segments: List[str] = []
+        for p in parts:
+            clean = (p or "").strip().strip("/")
+            if clean:
+                if not segments or not clean.startswith(segments[-1] + "/"):
+                    segments.append(clean)
+        return "/" + "/".join(segments) if segments else ""
+
     def scan(self) -> List[RouteEntry]:
         self._has_scanned_files = True
         self.routes = []
@@ -462,8 +492,11 @@ class RouteMapper:
         self._global_router_prefixes = {}
         self._router_def_prefixes = {}
         self._router_mount_prefixes = {}
+        self._router_def_files = {}
+        self._router_parent_edges = []
         self._pydantic_models = {}
         self._pending_view_routes = []
+        self._class_views = {}
 
         py_files: List[Tuple[str, str]] = []
         js_files: List[Tuple[str, str]] = []
@@ -485,6 +518,12 @@ class RouteMapper:
         for full_path, rel_path in py_files:
             self._precollect_python_prefixes(full_path, rel_path)
 
+        # Prune bare router variable names that collide across multiple files so only module-qualified keys apply
+        for r_var, mod_stems in self._router_def_files.items():
+            if len(mod_stems) > 1:
+                self._router_def_prefixes.pop(r_var, None)
+                self._router_mount_prefixes.pop(r_var, None)
+
         # Combine router definition prefixes and mount (register_blueprint / include_router) prefixes
         all_router_vars = set(self._router_def_prefixes.keys()) | set(self._router_mount_prefixes.keys())
         for r_var in all_router_vars:
@@ -496,6 +535,17 @@ class RouteMapper:
                 combined = mount_p or def_p
             if combined:
                 self._global_router_prefixes[r_var] = combined
+
+        # Propagate nested router chains (e.g. app.include_router(api, prefix="/api") -> api.include_router(v1, prefix="/v1"))
+        for _ in range(4):
+            for parent_var, child_var, edge_prefix in self._router_parent_edges:
+                if len(self._router_def_files.get(child_var, set())) > 1:
+                    continue
+                parent_p = self._global_router_prefixes.get(parent_var, "")
+                child_def_p = self._router_def_prefixes.get(child_var, "")
+                candidate = self._join_prefixes(parent_p, edge_prefix, child_def_p)
+                if candidate:
+                    self._global_router_prefixes[child_var] = candidate
 
         # Pass 2 on Python files: extract routes and call graphs
         for full_path, rel_path in py_files:
@@ -544,13 +594,19 @@ class RouteMapper:
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             tree = ast.parse(content, filename=rel_path)
+            mod_stem = os.path.splitext(os.path.basename(rel_path))[0]
 
             local_import_aliases: Dict[str, str] = {}
+            local_qual_import_aliases: Dict[str, str] = {}
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
+                    src_mod_stem = (node.module or "").split(".")[-1]
                     for alias in node.names:
+                        bound_name = alias.asname or alias.name
                         if alias.asname:
                             local_import_aliases[alias.asname] = alias.name
+                        if src_mod_stem:
+                            local_qual_import_aliases[bound_name] = f"{src_mod_stem}.{alias.name}"
 
             for node in ast.walk(tree):
                 # 0. Collect Pydantic BaseModel class fields for FastAPI JSON body inspection
@@ -576,32 +632,57 @@ class RouteMapper:
                     elif isinstance(node.value.func, ast.Attribute):
                         func_name = node.value.func.attr
                     if func_name in ("Blueprint", "APIRouter"):
+                        prefix = ""
                         for kw in node.value.keywords:
                             if kw.arg in ("url_prefix", "prefix") and isinstance(kw.value, ast.Constant):
                                 prefix = str(kw.value.value).rstrip("/")
-                                for target in node.targets:
-                                    if isinstance(target, ast.Name) and prefix:
-                                        self._router_def_prefixes[target.id] = prefix
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                self._router_def_files.setdefault(target.id, set()).add(mod_stem)
+                                if prefix:
+                                    self._router_def_prefixes[target.id] = prefix
+                                    self._router_def_prefixes[f"{mod_stem}.{target.id}"] = prefix
 
                 # 2. app.register_blueprint(orders_bp, url_prefix='/api')
                 #    app.include_router(orders_router, prefix='/api')
+                #    api_router.include_router(v1_router, prefix='/v1')
                 elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     if node.func.attr in ("register_blueprint", "include_router") and node.args:
+                        parent_var = ""
+                        if isinstance(node.func.value, ast.Name):
+                            parent_var = node.func.value.id
+                        elif isinstance(node.func.value, ast.Attribute):
+                            parent_var = node.func.value.attr
+                        parent_orig = local_import_aliases.get(parent_var, parent_var)
+
                         router_arg = node.args[0]
                         router_var = ""
+                        qual_router_var = ""
                         if isinstance(router_arg, ast.Name):
                             router_var = router_arg.id
+                            qual_router_var = local_qual_import_aliases.get(router_var, "")
                         elif isinstance(router_arg, ast.Attribute):
                             router_var = router_arg.attr
+                            if isinstance(router_arg.value, ast.Name):
+                                attr_mod = local_import_aliases.get(router_arg.value.id, router_arg.value.id)
+                                qual_router_var = f"{attr_mod}.{router_arg.attr}"
                         if router_var:
+                            prefix = ""
                             for kw in node.keywords:
                                 if kw.arg in ("url_prefix", "prefix") and isinstance(kw.value, ast.Constant):
                                     prefix = str(kw.value.value).rstrip("/")
-                                    if prefix:
-                                        self._router_mount_prefixes[router_var] = prefix
-                                        orig_name = local_import_aliases.get(router_var)
-                                        if orig_name:
-                                            self._router_mount_prefixes[orig_name] = prefix
+                            orig_name = local_import_aliases.get(router_var)
+                            if prefix:
+                                self._router_mount_prefixes[router_var] = prefix
+                                if orig_name:
+                                    self._router_mount_prefixes[orig_name] = prefix
+                                if qual_router_var:
+                                    self._router_mount_prefixes[qual_router_var] = prefix
+                            self._router_parent_edges.append((parent_orig, router_var, prefix))
+                            if orig_name:
+                                self._router_parent_edges.append((parent_orig, orig_name, prefix))
+                            if qual_router_var:
+                                self._router_parent_edges.append((parent_orig, qual_router_var, prefix))
         except Exception:
             pass
 
@@ -610,6 +691,40 @@ class RouteMapper:
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             tree = ast.parse(content, filename=rel_path)
+
+            # Collect class-based views (MethodView / View)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    is_view_cls = any(
+                        (isinstance(b, ast.Name) and b.id in ("MethodView", "View", "APIView"))
+                        or (isinstance(b, ast.Attribute) and b.attr in ("MethodView", "View", "APIView"))
+                        for b in node.bases
+                    )
+                    if is_view_cls:
+                        for item in node.body:
+                            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                m_lower = item.name.lower()
+                                if m_lower in ("get", "post", "put", "delete", "patch"):
+                                    end_line = getattr(item, "end_lineno", item.lineno)
+                                    vis = FunctionVisitor(item, pydantic_models=self._pydantic_models)
+                                    vis.visit(item)
+                                    qual_name = f"{node.name}.{item.name}"
+                                    self.func_to_file_lines[qual_name] = (rel_path, item.lineno, end_line)
+                                    self.call_graph.setdefault(qual_name, set()).update(vis.called_funcs)
+                                    self.func_defs.setdefault(qual_name, []).append(
+                                        (rel_path, item.lineno, end_line, set(vis.called_funcs), set(vis.parameters))
+                                    )
+                                    self._class_views.setdefault(node.name, []).append(
+                                        (
+                                            m_lower.upper(),
+                                            qual_name,
+                                            rel_path,
+                                            item.lineno,
+                                            end_line,
+                                            set(vis.called_funcs),
+                                            set(vis.parameters),
+                                        )
+                                    )
 
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -622,10 +737,20 @@ class RouteMapper:
                         (rel_path, node.lineno, end_line, set(vis.called_funcs), set(vis.parameters))
                     )
 
+            mod_stem = os.path.splitext(os.path.basename(rel_path))[0]
+            file_prefixes = dict(self._global_router_prefixes)
+            for r_var, mod_stems in self._router_def_files.items():
+                if mod_stem in mod_stems:
+                    qual_key = f"{mod_stem}.{r_var}"
+                    if qual_key in self._global_router_prefixes:
+                        file_prefixes[r_var] = self._global_router_prefixes[qual_key]
+                    elif len(mod_stems) > 1:
+                        file_prefixes.pop(r_var, None)
+
             extractor = RouteExtractor(
                 full_path,
                 rel_path,
-                global_prefixes=self._global_router_prefixes,
+                global_prefixes=file_prefixes,
                 pydantic_models=self._pydantic_models,
             )
             extractor.visit(tree)
@@ -636,12 +761,40 @@ class RouteMapper:
 
     def _resolve_pending_view_routes(self):
         for raw_path, target_func, framework in self._pending_view_routes:
+            norm_path = raw_path if raw_path.startswith("/") or raw_path.startswith("^") else "/" + raw_path
+            if target_func.startswith("ClassView:"):
+                cls_name = target_func.split(":", 1)[1]
+                for http_method, qual_name, rel_path, start_line, end_line, called_funcs, params in self._class_views.get(cls_name, []):
+                    route_params = set(params)
+                    param_sources: Dict[str, str] = {}
+                    for m in re.finditer(r"<(?:\w+:)?(\w+)>", norm_path):
+                        route_params.add(m.group(1))
+                        param_sources[m.group(1)] = "path"
+                    for m in re.finditer(r"\(\?P<(\w+)>", norm_path):
+                        route_params.add(m.group(1))
+                        param_sources[m.group(1)] = "path"
+                    self.routes.append(
+                        RouteEntry(
+                            method=http_method,
+                            path_pattern=norm_path,
+                            regex_pattern=_normalize_route_pattern_to_regex(norm_path),
+                            file_path=rel_path,
+                            func_name=qual_name,
+                            start_line=start_line,
+                            end_line=end_line,
+                            parameters=sorted(list(route_params)),
+                            param_sources=param_sources,
+                            called_funcs=sorted(list(called_funcs)),
+                            framework=framework,
+                        )
+                    )
+                continue
+
             defs = self.func_defs.get(target_func, [])
             if defs:
                 rel_path, start_line, end_line, called_funcs, params = defs[0]
-                norm_path = raw_path if raw_path.startswith("/") or raw_path.startswith("^") else "/" + raw_path
                 route_params = set(params)
-                param_sources: Dict[str, str] = {}
+                param_sources = {}
                 # Extract path converter params like <int:id>
                 for m in re.finditer(r"<(?:\w+:)?(\w+)>", norm_path):
                     route_params.add(m.group(1))
@@ -704,9 +857,15 @@ class RouteMapper:
             except Exception:
                 pass
 
-        # Second pass: extract Express routes
+        # Second pass: extract Express routes (direct obj.get('/path', ...) AND chained obj.route('/path').get(...).post(...))
         route_regex = re.compile(
             r"""\b([a-zA-Z_]\w*)\s*\.\s*(get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^\n]+)"""
+        )
+        chain_route_start_regex = re.compile(
+            r"""\b([a-zA-Z_]\w*)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)"""
+        )
+        chain_method_regex = re.compile(
+            r"""\.\s*(get|post|put|delete|patch)\s*\("""
         )
         for full_path, rel_path in js_files:
             try:
@@ -714,6 +873,7 @@ class RouteMapper:
                     content = f.read()
                 lines = content.splitlines()
 
+                # 2a. Direct obj.get('/path', handler)
                 for idx, line_str in enumerate(lines):
                     rm = route_regex.search(line_str)
                     if not rm:
@@ -777,6 +937,53 @@ class RouteMapper:
                                 framework="express",
                             )
                         )
+
+                # 2b. Chained router.route('/items/:id').get(...).post(...)
+                for idx, line_str in enumerate(lines):
+                    cm = chain_route_start_regex.search(line_str)
+                    if not cm:
+                        continue
+                    obj_name, raw_path = cm.group(1), cm.group(2)
+                    prefix = router_prefixes.get(obj_name, "")
+                    full_route_path = f"{prefix}/{raw_path.lstrip('/')}" if prefix else raw_path
+                    if not full_route_path.startswith("/"):
+                        full_route_path = "/" + full_route_path
+
+                    # Scan lines from idx until end of chained statement
+                    chain_end_idx = min(len(lines), idx + 30)
+                    for scan_idx in range(idx, chain_end_idx):
+                        scan_line = lines[scan_idx]
+                        for mm in chain_method_regex.finditer(scan_line):
+                            # Avoid matching obj.get('/path', ...) which has a string literal first arg
+                            after_paren = scan_line[mm.end():].lstrip()
+                            if after_paren.startswith(("'", '"')):
+                                continue
+                            method_str = mm.group(1).upper()
+                            m_start_line = scan_idx + 1
+                            m_end_line = self._find_js_block_end(lines, scan_idx)
+                            block_text = "\n".join(lines[scan_idx:m_end_line])
+                            func_name = f"express_{method_str.lower()}_{re.sub(r'[^a-zA-Z0-9_]', '_', full_route_path).strip('_') or 'root'}"
+                            params = self._extract_js_params(block_text, "")
+                            for pm in re.finditer(r":([a-zA-Z_]\w*)", full_route_path):
+                                params.add(pm.group(1))
+                            called = self._extract_js_calls(block_text)
+                            self.func_to_file_lines[func_name] = (rel_path, m_start_line, m_end_line)
+                            self.call_graph.setdefault(func_name, set()).update(called)
+                            self.func_defs.setdefault(func_name, []).append((rel_path, m_start_line, m_end_line, called, params))
+                            self.routes.append(
+                                RouteEntry(
+                                    method=method_str,
+                                    path_pattern=full_route_path,
+                                    regex_pattern=_normalize_route_pattern_to_regex(full_route_path),
+                                    file_path=rel_path,
+                                    func_name=func_name,
+                                    start_line=m_start_line,
+                                    end_line=m_end_line,
+                                    parameters=sorted(list(params)),
+                                    called_funcs=sorted(list(called)),
+                                    framework="express",
+                                )
+                            )
             except Exception:
                 pass
 

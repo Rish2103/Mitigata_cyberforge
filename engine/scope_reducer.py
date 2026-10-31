@@ -66,8 +66,17 @@ class ScopeReducer:
     with Person B's 2-phase DAST scanner (`engine/dast_scanner.py`).
     """
 
-    def __init__(self, route_mapper: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        route_mapper: Optional[Any] = None,
+        routes: Optional[Sequence[RouteEntry]] = None,
+        sast_findings: Optional[Sequence[CanonicalFinding]] = None,
+        live_endpoints: Optional[Sequence[Any]] = None,
+    ) -> None:
         self.route_mapper = route_mapper
+        self.routes = list(routes) if routes is not None else []
+        self.sast_findings = list(sast_findings) if sast_findings is not None else []
+        self.live_endpoints = list(live_endpoints) if live_endpoints is not None else None
 
     @staticmethod
     def _normalize_live_endpoint(
@@ -460,17 +469,17 @@ class ScopeReducer:
 
     def build_dast_probe_plan(
         self,
-        routes: Sequence[RouteEntry],
-        sast_findings: Sequence[CanonicalFinding],
+        routes: Optional[Sequence[RouteEntry]] = None,
+        sast_findings: Optional[Sequence[CanonicalFinding]] = None,
         live_endpoints: Optional[
             Sequence[Union[str, Tuple[str, str], Tuple[str, str, Sequence[str]], RouteEntry, Dict[str, Any]]]
         ] = None,
     ) -> ScopeReductionReport:
         """Alias for `compute_scope_reduction` returning the full `ScopeReductionReport`."""
         return self.compute_scope_reduction(
-            routes=routes,
-            sast_findings=sast_findings,
-            live_endpoints=live_endpoints,
+            routes=routes if routes is not None else self.routes,
+            sast_findings=sast_findings if sast_findings is not None else self.sast_findings,
+            live_endpoints=live_endpoints if live_endpoints is not None else self.live_endpoints,
         )
 
     @staticmethod
@@ -507,6 +516,10 @@ class ScopeReducer:
         return True
 
 
+RuntimeScopeReducer = ScopeReducer
+DASTProbePlan = ScopeReductionReport
+
+
 def compute_scope_reduction(
     routes: Sequence[RouteEntry],
     sast_findings: Sequence[CanonicalFinding],
@@ -524,6 +537,28 @@ def compute_scope_reduction(
     )
 
 
+def build_dast_probe_plan(
+    routes: Sequence[RouteEntry],
+    sast_findings: Sequence[CanonicalFinding],
+    live_endpoints: Optional[
+        Sequence[Union[str, Tuple[str, str], Tuple[str, str, Sequence[str]], RouteEntry, Dict[str, Any]]]
+    ] = None,
+    route_mapper: Optional[Any] = None,
+) -> ScopeReductionReport:
+    """Top-level bridge function for building the Adaptive DAST Scope Reduction Plan."""
+    reducer = RuntimeScopeReducer(
+        route_mapper=route_mapper,
+        routes=routes,
+        sast_findings=sast_findings,
+        live_endpoints=live_endpoints,
+    )
+    return reducer.build_dast_probe_plan(
+        routes=routes,
+        sast_findings=sast_findings,
+        live_endpoints=live_endpoints,
+    )
+
+
 __all__ = [
     "ACTIVE_DAST_CWES",
     "TIME_COMPLEXITY_LABEL",
@@ -531,6 +566,10 @@ __all__ = [
     "ScopeStrategy",
     "RouteParityEntry",
     "ScopeReductionReport",
+    "DASTProbePlan",
     "ScopeReducer",
+    "RuntimeScopeReducer",
     "compute_scope_reduction",
+    "build_dast_probe_plan",
 ]
+

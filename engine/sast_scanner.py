@@ -478,6 +478,10 @@ class SASTScanner:
     ) -> List[CanonicalFinding]:
         active_mapper = route_mapper or self.route_mapper
         all_findings: List[CanonicalFinding] = []
+        self._func_param_names: Dict[str, List[str]] = {}
+        self._func_var_to_http_param: Dict[str, Dict[str, str]] = {}
+        self._func_call_edges: Dict[str, List[Tuple[str, List[str]]]] = {}
+        self._func_local_aliases: Dict[str, List[Tuple[str, str]]] = {}
 
         for dirpath, _, filenames in os.walk(self.root_dir):
             parts = os.path.normpath(dirpath).split(os.sep)
@@ -494,7 +498,120 @@ class SASTScanner:
                     js_findings = self._scan_js_file(full_path, rel_path, reachable_files, active_mapper)
                     all_findings.extend(js_findings)
 
+        # Propagate HTTP parameter names across 3-hop helper call chains & intra-function aliases
+        for _ in range(5):
+            for fn_name, aliases in self._func_local_aliases.items():
+                fn_map = self._func_var_to_http_param.get(fn_name, {})
+                if not fn_map:
+                    continue
+                for target_var, src_var in aliases:
+                    if src_var in fn_map and target_var not in fn_map:
+                        fn_map[target_var] = fn_map[src_var]
+
+            for caller_fn, calls in self._func_call_edges.items():
+                caller_map = self._func_var_to_http_param.get(caller_fn, {})
+                if not caller_map:
+                    continue
+                for callee_fn, arg_vars in calls:
+                    callee_formals = self._func_param_names.get(callee_fn, [])
+                    for idx, passed_var in enumerate(arg_vars):
+                        if idx < len(callee_formals) and passed_var in caller_map:
+                            formal_name = callee_formals[idx]
+                            self._func_var_to_http_param.setdefault(callee_fn, {}).setdefault(
+                                formal_name, caller_map[passed_var]
+                            )
+
+        for fn_name, aliases in self._func_local_aliases.items():
+            fn_map = self._func_var_to_http_param.get(fn_name, {})
+            if fn_map:
+                for target_var, src_var in aliases:
+                    if src_var in fn_map and target_var not in fn_map:
+                        fn_map[target_var] = fn_map[src_var]
+
+        for f in all_findings:
+            if f.func_name and f.param:
+                fn_map = self._func_var_to_http_param.get(f.func_name, {})
+                if f.param in fn_map:
+                    f.param = fn_map[f.param]
+
         return all_findings
+
+    @staticmethod
+    def _extract_http_param_from_expr(expr: ast.AST) -> Optional[str]:
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+            if expr.func.attr in ("get", "getlist") and expr.args:
+                arg0 = expr.args[0]
+                if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+                    return arg0.value
+        elif isinstance(expr, ast.Subscript) and isinstance(expr.slice, ast.Constant):
+            if isinstance(expr.slice.value, str):
+                return expr.slice.value
+        return None
+
+    def _collect_interprocedural_taint(self, tree: ast.AST) -> None:
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn_name = node.name
+                formals = [
+                    a.arg for a in node.args.args
+                    if a.arg not in ("self", "cls", "request", "req", "db", "session", "conn", "cursor")
+                ]
+                self._func_param_names[fn_name] = formals
+                var_map = self._func_var_to_http_param.setdefault(fn_name, {})
+                if node.decorator_list:
+                    for p in formals:
+                        var_map.setdefault(p, p)
+
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Assign):
+                        param_extracted = self._extract_http_param_from_expr(sub.value)
+                        if param_extracted:
+                            for t in sub.targets:
+                                if isinstance(t, ast.Name):
+                                    var_map[t.id] = param_extracted
+                        else:
+                            call_func_ids = {
+                                c.func.id
+                                for c in ast.walk(sub.value)
+                                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                            }
+                            src_names = [
+                                n.id
+                                for n in ast.walk(sub.value)
+                                if isinstance(n, ast.Name)
+                                and n.id not in call_func_ids
+                                and n.id not in ("str", "int", "float", "list", "dict", "set", "tuple", "len", "True", "False", "None")
+                            ]
+                            for t in sub.targets:
+                                if isinstance(t, ast.Name):
+                                    for s_name in src_names:
+                                        if s_name != t.id:
+                                            self._func_local_aliases.setdefault(fn_name, []).append((t.id, s_name))
+
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Call):
+                        callee_name = ""
+                        if isinstance(sub.func, ast.Name):
+                            callee_name = sub.func.id
+                        elif isinstance(sub.func, ast.Attribute):
+                            callee_name = sub.func.attr
+                        if callee_name:
+                            arg_names: List[str] = []
+                            for a in sub.args:
+                                inline_param = self._extract_http_param_from_expr(a)
+                                if inline_param:
+                                    pseudo_key = f"__inline_param__:{inline_param}"
+                                    var_map[pseudo_key] = inline_param
+                                    arg_names.append(pseudo_key)
+                                elif isinstance(a, ast.Name):
+                                    arg_names.append(a.id)
+                                elif isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute) and isinstance(a.func.value, ast.Name):
+                                    arg_names.append(a.func.value.id)
+                                elif isinstance(a, ast.Call) and a.args and isinstance(a.args[0], ast.Name):
+                                    arg_names.append(a.args[0].id)
+                                else:
+                                    arg_names.append("")
+                            self._func_call_edges.setdefault(fn_name, []).append((callee_name, arg_names))
 
     def _scan_python_file(
         self,
@@ -508,6 +625,9 @@ class SASTScanner:
                 content = f.read()
             lines = content.splitlines()
             tree = ast.parse(content, filename=rel_path)
+
+            if hasattr(self, "_func_param_names"):
+                self._collect_interprocedural_taint(tree)
 
             visitor = SASTVisitor(full_path, rel_path, lines)
             visitor.visit(tree)
@@ -524,6 +644,45 @@ class SASTScanner:
             return filtered
         except Exception:
             return []
+
+    @staticmethod
+    def _infer_js_param(line_s: str, context_window: str) -> Optional[str]:
+        # Direct req.query.x / req.body.x / req.params.x on line
+        m_direct = re.search(r"\breq\s*\.\s*(?:query|body|params)\s*\.\s*([a-zA-Z_]\w*)", line_s)
+        if m_direct:
+            return m_direct.group(1)
+        m_sub = re.search(r"""\breq\s*\.\s*(?:query|body|params)\s*\[\s*['"]([^'"]+)['"]\s*\]""", line_s)
+        if m_sub:
+            return m_sub.group(1)
+
+        # Map local JS variable -> req.query.param in context window
+        var_to_param: Dict[str, str] = {}
+        for m in re.finditer(
+            r"\b(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=\s*req\s*\.\s*(?:query|body|params)\s*\.\s*([a-zA-Z_]\w*)",
+            context_window,
+        ):
+            var_to_param[m.group(1)] = m.group(2)
+        for m in re.finditer(
+            r"\{\s*([^}]+)\}\s*=\s*req\s*\.\s*(?:query|body|params)",
+            context_window,
+        ):
+            for part in m.group(1).split(","):
+                clean_p = part.split(":")[0].split("=")[0].strip()
+                if clean_p and re.match(r"^[a-zA-Z_]\w*$", clean_p):
+                    var_to_param[clean_p] = clean_p
+
+        # Check template literal ${var} or concatenation + var
+        for m_interp in re.finditer(r"\$\{\s*([a-zA-Z_]\w*)\s*\}", line_s):
+            tok = m_interp.group(1)
+            if tok in var_to_param:
+                return var_to_param[tok]
+            return tok
+        for tok in re.findall(r"\b[a-zA-Z_]\w*\b", line_s):
+            if tok in var_to_param:
+                return var_to_param[tok]
+        if len(var_to_param) == 1:
+            return next(iter(var_to_param.values()))
+        return None
 
     # -------------------------------------------------------------------------
     # Bonus B-7: Node.js / Express SAST Scanner
@@ -547,9 +706,10 @@ class SASTScanner:
                 if not line_s or line_s.startswith("//") or line_s.startswith("/*"):
                     continue
 
-                window_start = max(0, idx - 4)
+                window_start = max(0, idx - 6)
                 window_end = min(len(lines), idx + 5)
                 context_window = "\n".join(lines[window_start:window_end])
+                js_param = self._infer_js_param(line_s, context_window)
 
                 # 1. CWE-89: JS SQL Injection
                 if re.search(r"\b(?:db|pool|conn|connection|client|sequelize|knex)\s*\.\s*(?:query|execute|raw|all|get)\s*\(", line_s):
@@ -566,6 +726,7 @@ class SASTScanner:
                                 severity=Severity.CRITICAL,
                                 file_path=rel_path,
                                 line=lineno,
+                                param=js_param,
                                 code_snippet=line_s,
                                 is_protected_decoy=has_bound_params,
                                 decoy_reason="Safe parameterized SQL query with bound array parameters" if has_bound_params else None,
@@ -588,6 +749,7 @@ class SASTScanner:
                                 severity=Severity.CRITICAL,
                                 file_path=rel_path,
                                 line=lineno,
+                                param=js_param,
                                 code_snippet=line_s,
                                 is_protected_decoy=is_safe_cmd,
                                 decoy_reason="Safe command execution via execFile/spawn without shell" if is_safe_cmd else None,
@@ -609,6 +771,7 @@ class SASTScanner:
                                 severity=Severity.HIGH,
                                 file_path=rel_path,
                                 line=lineno,
+                                param=js_param,
                                 code_snippet=line_s,
                                 is_protected_decoy=is_safe_xss,
                                 decoy_reason=xss_reason if is_safe_xss else None,
@@ -628,6 +791,7 @@ class SASTScanner:
                                 severity=Severity.HIGH,
                                 file_path=rel_path,
                                 line=lineno,
+                                param=js_param,
                                 code_snippet=line_s,
                                 is_protected_decoy=is_safe_path,
                                 decoy_reason=path_reason if is_safe_path else None,
@@ -647,6 +811,7 @@ class SASTScanner:
                                 severity=Severity.MEDIUM,
                                 file_path=rel_path,
                                 line=lineno,
+                                param=js_param,
                                 code_snippet=line_s,
                                 is_protected_decoy=is_safe_red,
                                 decoy_reason=red_reason if is_safe_red else None,
@@ -807,3 +972,43 @@ class SASTScanner:
         if "redirect" in rid_lower:
             return "CWE-601"
         return "CWE-798"
+
+    def ingest_sarif(
+        self, sarif_input: Union[str, Dict[str, Any]], route_mapper: Optional[Any] = None
+    ) -> List[CanonicalFinding]:
+        return SASTScanner.from_sarif(sarif_input)
+
+    def ingest_bandit_json(
+        self, bandit_input: Union[str, Dict[str, Any]], route_mapper: Optional[Any] = None
+    ) -> List[CanonicalFinding]:
+        return SASTScanner.from_bandit(bandit_input)
+
+    parse_sarif_report = ingest_sarif
+    parse_bandit_report = ingest_bandit_json
+
+
+def run_sast_scan(
+    source_dir: str,
+    routes: Optional[List[Any]] = None,
+    route_mapper: Optional[Any] = None,
+) -> List[CanonicalFinding]:
+    """
+    Top-level convenience entrypoint for running the AST SAST + B-2 Safe Decoy Filter
+    on a source directory (invoked by `api/main.py` and CLI runners).
+    """
+    from engine.route_mapper import RouteMapper
+
+    mapper = route_mapper
+    if mapper is None:
+        mapper = RouteMapper(source_dir)
+        mapper.scan()
+    reachable_files = mapper.get_reachable_files() if mapper.routes else None
+    scanner = SASTScanner(source_dir, route_mapper=mapper)
+    return scanner.scan(reachable_files=reachable_files, route_mapper=mapper)
+
+
+def scan_source(source_dir: str) -> List[CanonicalFinding]:
+    """Alias for `run_sast_scan(source_dir)`."""
+    return run_sast_scan(source_dir)
+
+

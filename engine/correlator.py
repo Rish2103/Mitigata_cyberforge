@@ -136,6 +136,90 @@ def _get_fix_suggestion(
     return "Apply principle of least privilege, strict input validation, and context-aware output encoding."
 
 
+def _generate_contextual_remediation_diff(
+    cwe: str,
+    param: Optional[str] = None,
+    code_snippet: Optional[str] = None,
+    file_path: Optional[str] = None,
+    line: Optional[int] = None,
+) -> str:
+    """
+    Generates a unified diff (`--- a/...` / `+++ b/...`) using the actual file path,
+    line number, parameter name, and vulnerable code snippet.
+    """
+    target_file = (file_path or "app.py").replace("\\", "/").lstrip("./")
+    line_no = line or 1
+    p = param or "user_input"
+    snippet_clean = (code_snippet or "").strip().splitlines()[0].strip() if code_snippet else ""
+
+    if cwe == "CWE-89":
+        before = snippet_clean or f'cursor.execute(f"SELECT * FROM table WHERE {p} = \'{{{p}}}\'")'
+        after = f'cursor.execute("SELECT * FROM table WHERE {p} = ?", ({p},))'
+    elif cwe == "CWE-79":
+        before = snippet_clean or f'return render_template_string(f"<div>{{{p}}}</div>")'
+        after = f'return render_template_string("<div>{{{{ {p} }}}}</div>", {p}={p})'
+    elif cwe == "CWE-78":
+        before = snippet_clean or f'subprocess.check_output(f"cmd {{{p}}}", shell=True)'
+        after = f'subprocess.run(["cmd", {p}], shell=False, check=True, capture_output=True, text=True)'
+    elif cwe == "CWE-22":
+        before = snippet_clean or f'send_file(f"{{UPLOAD_DIR}}/{{{p}}}")'
+        after = f'send_file(os.path.realpath(os.path.join(UPLOAD_DIR, secure_filename({p}))))'
+    elif cwe == "CWE-601":
+        before = snippet_clean or f"return redirect({p})"
+        after = f'return redirect({p} if ({p}.startswith("/") and not {p}.startswith("//")) else "/")'
+    elif cwe == "CWE-798":
+        before = snippet_clean or 'SECRET_KEY = "sk_live_hardcoded_secret"'
+        var_name = before.split("=")[0].strip() if "=" in before else "SECRET_KEY"
+        after = f'{var_name} = os.environ["{var_name}"]'
+    else:
+        before = snippet_clean or "# missing security control"
+        after = _get_fix_suggestion(cwe, param, code_snippet)
+
+    return (
+        f"--- a/{target_file}\n"
+        f"+++ b/{target_file}\n"
+        f"@@ -{line_no},1 +{line_no},1 @@\n"
+        f"-    {before}\n"
+        f"+    {after}"
+    )
+
+
+def _attach_bridge_attributes(
+    issue: CorrelatedIssue,
+    *,
+    confidence: str,
+    signals_matched: List[str],
+    sast_finding_ids: List[str],
+    dast_finding_ids: List[str],
+) -> CorrelatedIssue:
+    """
+    Populates both Person A and Person B bridge attributes on `CorrelatedIssue`
+    without modifying the frozen `core/schemas.py` model definition.
+    """
+    rem_diff = _generate_contextual_remediation_diff(
+        cwe=issue.cwe,
+        param=issue.param,
+        code_snippet=issue.code_snippet,
+        file_path=issue.file_path,
+        line=issue.line,
+    )
+    issue.__dict__.update(
+        {
+            "remediation": issue.fix_suggestion,
+            "remediation_text": issue.fix_suggestion,
+            "remediation_code_diff": rem_diff,
+            "correlation_reason": issue.link_reason,
+            "confidence": confidence,
+            "signals_matched": list(signals_matched),
+            "sast_finding_ids": list(sast_finding_ids),
+            "dast_finding_ids": list(dast_finding_ids),
+            "sast_findings": list(issue.sast_evidence),
+            "dast_findings": list(issue.dast_evidence),
+        }
+    )
+    return issue
+
+
 def _compute_risk_score(status: IssueStatus, cwe: str, severity: Severity) -> float:
     """
     Computes exploitability risk score (0-100) per FR-9:
@@ -161,8 +245,23 @@ class Correlator:
     and computes Runtime-Verified Adaptive DAST Scope Reduction (Checkpoint 1 Judge Feedback).
     """
 
-    def __init__(self, route_mapper: RouteMapper):
-        self.route_mapper = route_mapper
+    def __init__(
+        self,
+        route_mapper: Optional[RouteMapper] = None,
+        source_dir: Optional[str] = None,
+        routes: Optional[List[RouteEntry]] = None,
+    ):
+        if route_mapper is not None:
+            self.route_mapper = route_mapper
+        elif source_dir:
+            self.route_mapper = RouteMapper(source_dir)
+            self.route_mapper.scan()
+            if routes and not self.route_mapper.routes:
+                self.route_mapper = RouteMapper.from_routes(routes, root_dir=source_dir)
+        elif routes is not None:
+            self.route_mapper = RouteMapper.from_routes(routes)
+        else:
+            self.route_mapper = RouteMapper.from_routes([])
         self.last_scope_reduction: Optional[ScopeReductionReport] = None
 
     def compute_dast_scope(
@@ -262,18 +361,36 @@ class Correlator:
         return list(grouped.values())
 
     @staticmethod
-    def _has_parameter_conflict(sast_snippet: str, dast_param: Optional[str], route_params: List[str]) -> bool:
+    def _has_parameter_conflict(
+        sast_snippet: str,
+        dast_param: Optional[str],
+        route_params: List[str],
+        sast_param: Optional[str] = None,
+    ) -> bool:
         """
         Hard Negative Veto 3:
         If a route handler accepts multiple parameters (e.g. 'user' and 'role'),
-        and the SAST sink snippet explicitly uses one route parameter ('user') while NOT containing
-        the DAST parameter ('role'), veto the link so we never cross-link two different parameters.
+        and the SAST sink (either via inferred `sast_param` or `sast_snippet`) explicitly uses
+        one route parameter ('user') while NOT matching the DAST parameter ('role'),
+        veto the link so we never cross-link two different parameters.
         """
-        if not dast_param or not sast_snippet or len(route_params) <= 1:
+        if not dast_param or len(route_params) <= 1:
+            return False
+
+        d_param_lower = dast_param.strip().lower()
+        route_params_lower = {rp.lower() for rp in route_params if rp}
+
+        if sast_param:
+            s_param_lower = sast_param.strip().lower()
+            if s_param_lower == d_param_lower:
+                return False
+            if s_param_lower in route_params_lower and s_param_lower != d_param_lower:
+                return True
+
+        if not sast_snippet:
             return False
 
         snippet_lower = sast_snippet.lower()
-        d_param_lower = dast_param.lower()
 
         # If the DAST parameter itself appears in the snippet, there is no conflict
         if d_param_lower in snippet_lower:
@@ -349,8 +466,13 @@ class Correlator:
                 # VETO 3: Code location (file + line) must be inside the route handler or its called helpers
                 if s.file_path and s.line:
                     if self.route_mapper.is_line_in_route(s.file_path, s.line, dast_route):
-                        # VETO 4: Multi-parameter snippet conflict check
-                        if self._has_parameter_conflict(s.code_snippet or "", d.param, dast_route.parameters):
+                        # VETO 4: Multi-parameter snippet & inferred param conflict check
+                        if self._has_parameter_conflict(
+                            s.code_snippet or "",
+                            d.param,
+                            dast_route.parameters,
+                            sast_param=s.param,
+                        ):
                             continue
 
                         score = 10  # base match for route + CWE
@@ -401,7 +523,7 @@ class Correlator:
                 issue_id = _generate_issue_id(
                     "CONF",
                     best_sast.cwe,
-                    f"{dast_route.path_pattern}:{best_sast.file_path}:{best_sast.line}",
+                    f"{dast_route.path_pattern}:{best_sast.file_path}:{best_sast.line}:{effective_param or ''}",
                 )
                 issue = CorrelatedIssue(
                     id=issue_id,
@@ -435,6 +557,13 @@ class Correlator:
                     estimated_exposure_inr=5000000.0 if best_sast.cwe in ("CWE-89", "CWE-78") else 1500000.0,
                     sebi_sla_days=7 if effective_sev == Severity.CRITICAL else 30,
                 )
+                _attach_bridge_attributes(
+                    issue,
+                    confidence="HIGH",
+                    signals_matched=["route", "cwe", "parameter"] if effective_param else ["route", "cwe"],
+                    sast_finding_ids=[f.id for f in sast_ev],
+                    dast_finding_ids=[f.id for f in dast_ev],
+                )
                 correlated_issues.append(issue)
 
         # Step 3: Remaining SAST findings become 'Code only' (FR-7)
@@ -442,7 +571,7 @@ class Correlator:
             if s.id not in matched_sast_ids:
                 sast_merged_ids = s.raw_details.get("merged_finding_ids", [s.id])
                 sast_ev = [raw_sast_by_id[fid] for fid in sast_merged_ids if fid in raw_sast_by_id] or [s]
-                issue_id = _generate_issue_id("CODE", s.cwe, f"{s.file_path}:{s.line}")
+                issue_id = _generate_issue_id("CODE", s.cwe, f"{s.file_path}:{s.line}:{s.param or ''}")
                 issue = CorrelatedIssue(
                     id=issue_id,
                     status=IssueStatus.CODE_ONLY,
@@ -464,6 +593,13 @@ class Correlator:
                     finding_count=len(sast_ev),
                     estimated_exposure_inr=500000.0,
                     sebi_sla_days=90,
+                )
+                _attach_bridge_attributes(
+                    issue,
+                    confidence="MEDIUM",
+                    signals_matched=["sast_sink", "cwe"],
+                    sast_finding_ids=[f.id for f in sast_ev],
+                    dast_finding_ids=[],
                 )
                 correlated_issues.append(issue)
 
@@ -501,6 +637,13 @@ class Correlator:
                     estimated_exposure_inr=1000000.0,
                     sebi_sla_days=30,
                 )
+                _attach_bridge_attributes(
+                    issue,
+                    confidence="MEDIUM",
+                    signals_matched=["runtime_probe", "cwe"],
+                    sast_finding_ids=[],
+                    dast_finding_ids=[f.id for f in dast_ev],
+                )
                 correlated_issues.append(issue)
 
         # Step 5: FR-6 Deduplication: ensure unique issue IDs
@@ -529,16 +672,30 @@ def correlate_findings(
     routes: List[RouteEntry],
     sast_findings: List[CanonicalFinding],
     dast_findings: List[CanonicalFinding],
+    source_dir: Optional[str] = None,
+    live_endpoints: Optional[List[Tuple[str, str]]] = None,
     route_mapper: Optional[RouteMapper] = None,
 ) -> List[CorrelatedIssue]:
     """
     Module-level correlation entrypoint invoked by api/main.py.
     Uses an existing RouteMapper (with full 3-hop call graph) when provided,
-    or constructs a RouteMapper from `routes` via `RouteMapper.from_routes(routes)`.
+    or constructs a RouteMapper from `source_dir` or `routes`.
     """
-    mapper = route_mapper if route_mapper is not None else RouteMapper.from_routes(routes)
+    if route_mapper is not None:
+        mapper = route_mapper
+    elif source_dir:
+        mapper = RouteMapper(source_dir)
+        mapper.scan()
+        if routes and not mapper.routes:
+            mapper = RouteMapper.from_routes(routes, root_dir=source_dir)
+    else:
+        mapper = RouteMapper.from_routes(routes)
+
     if routes and not mapper.routes:
         mapper = RouteMapper.from_routes(routes, root_dir=getattr(mapper, "root_dir", "."))
-    engine = Correlator(mapper)
-    return engine.correlate(sast_findings, dast_findings)
+
+    engine = Correlator(route_mapper=mapper, source_dir=source_dir, routes=routes)
+    return engine.correlate(sast_findings, dast_findings, live_endpoints=live_endpoints)
+
+
 

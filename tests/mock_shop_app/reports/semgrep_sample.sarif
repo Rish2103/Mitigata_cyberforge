@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Semgrep OSS",
+          "semanticVersion": "1.65.0",
+          "rules": [
+            {
+              "id": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+              "name": "formatted-sql-query",
+              "shortDescription": {
+                "text": "Detected possible formatted SQL query. Use parameterized queries instead."
+              },
+              "properties": {
+                "tags": ["security", "CWE-89", "OWASP-A03:2021"]
+              }
+            },
+            {
+              "id": "python.lang.security.audit.dangerous-system-call.dangerous-system-call",
+              "name": "dangerous-system-call",
+              "shortDescription": {
+                "text": "Detected dynamic input passed to os.system() shell command."
+              },
+              "properties": {
+                "tags": ["security", "CWE-78", "OWASP-A03:2021"]
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+          "level": "error",
+          "message": {
+            "text": "User-controlled parameter 'id' formatted into SQL query and executed via cursor.execute(query)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "services/order_service.py"
+                },
+                "region": {
+                  "startLine": 25,
+                  "snippet": {
+                    "text": "    cursor.execute(query)"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "python.lang.security.audit.dangerous-system-call.dangerous-system-call",
+          "level": "error",
+          "message": {
+            "text": "User-controlled parameter 'host' passed to os.system()."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app.py"
+                },
+                "region": {
+                  "startLine": 68,
+                  "snippet": {
+                    "text": "    exit_code = os.system(f\"ping -c 1 {host}\")"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

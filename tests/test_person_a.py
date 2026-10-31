@@ -681,7 +681,241 @@ app.get('/api/node/items-safe/:id', (req, res) => {
         self.assertIn("Before:", confirmed[0].fix_suggestion)
         self.assertIn("After:", confirmed[0].fix_suggestion)
 
+    def test_nested_fastapi_include_router_and_flask_methodview(self):
+        """
+        Task A2.2 & A4.1: Verifies 2-level nested FastAPI `include_router` prefix resolution
+        (`app -> /api -> /v1 -> /accounts/{acc_id}`) and Flask `MethodView` (`as_view`)
+        class-based view route & method extraction.
+        """
+        fastapi_main = """
+from fastapi import FastAPI, APIRouter
+from routers_v1 import v1_router
+
+app = FastAPI()
+api_router = APIRouter()
+api_router.include_router(v1_router, prefix="/v1")
+app.include_router(api_router, prefix="/api")
+"""
+        fastapi_v1 = """
+import sqlite3
+from fastapi import APIRouter
+
+v1_router = APIRouter()
+
+@v1_router.get("/accounts/{acc_id}")
+def get_account(acc_id: str):
+    conn = sqlite3.connect(":memory:")
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM accounts WHERE id = '{acc_id}'")
+    return {"acc_id": acc_id}
+"""
+        flask_cbv = """
+import os
+from flask import Flask, request
+from flask.views import MethodView
+
+app = Flask(__name__)
+
+class MemberAPI(MethodView):
+    def get(self, mid):
+        return {"mid": mid}
+
+    def post(self, mid):
+        cmd = request.args.get("cmd", "whoami")
+        os.system(f"echo {cmd}")
+        return {"ran": cmd}
+
+app.add_url_rule("/api/v2/members/<int:mid>", view_func=MemberAPI.as_view("member_api"))
+"""
+        with open(os.path.join(self.test_dir, "main_api.py"), "w", encoding="utf-8") as f:
+            f.write(fastapi_main)
+        with open(os.path.join(self.test_dir, "routers_v1.py"), "w", encoding="utf-8") as f:
+            f.write(fastapi_v1)
+        with open(os.path.join(self.test_dir, "cbv_app.py"), "w", encoding="utf-8") as f:
+            f.write(flask_cbv)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        patterns = {(r.method, r.path_pattern) for r in routes}
+        self.assertIn(("GET", "/api/v1/accounts/{acc_id}"), patterns)
+        self.assertIn(("GET", "/api/v2/members/<int:mid>"), patterns)
+        self.assertIn(("POST", "/api/v2/members/<int:mid>"), patterns)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast = scanner.scan(route_mapper=mapper)
+        dast = [
+            CanonicalFinding(
+                id="dast_nested_fastapi",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://localhost:8000/api/v1/accounts/42'",
+                method="GET",
+                param="acc_id",
+                payload="42'",
+            ),
+            CanonicalFinding(
+                id="dast_cbv_post",
+                source=FindingSource.DAST,
+                cwe="CWE-78",
+                severity=Severity.CRITICAL,
+                url="http://localhost:5000/api/v2/members/7?cmd=id",
+                method="POST",
+                param="cmd",
+                payload=";id",
+            ),
+        ]
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast, dast)
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 2)
+
+    def test_express_router_route_chaining(self):
+        """
+        Task A2.2 & A4.1: Verifies Express `router.route('/items/:id').get(...).post(...)`
+        chained route definitions extract both GET and POST routes and correlate sinks.
+        """
+        js_chained = """
+const express = require('express');
+const router = express.Router();
+const db = require('./db');
+const { exec } = require('child_process');
+
+router.route('/v1/chained/:id')
+  .get((req, res) => {
+      const itemId = req.params.id;
+      db.query("SELECT * FROM chained WHERE id = '" + itemId + "'");
+      res.send("ok");
+  })
+  .post((req, res) => {
+      const host = req.body.host;
+      exec("ping -c 1 " + host);
+      res.send("pong");
+  });
+"""
+        with open(os.path.join(self.test_dir, "chained.js"), "w", encoding="utf-8") as f:
+            f.write(js_chained)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        methods_for_chained = {r.method for r in routes if r.path_pattern == "/v1/chained/:id"}
+        self.assertEqual(methods_for_chained, {"GET", "POST"})
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast = scanner.scan(route_mapper=mapper)
+        self.assertEqual(len([f for f in sast if not f.is_protected_decoy]), 2)
+
+    def test_3_hop_intermediate_dict_json_taint_and_real_world_sanitizers(self):
+        """
+        Task A2.2 & A4.1:
+        1. Tracks `data = request.get_json(); val = data.get("query_filter")` across a 3-hop helper chain
+           (`route -> hop1 -> hop2 -> hop3`) preserving `param="query_filter"`.
+        2. Recognizes real-world sanitizers (`bleach.clean`, SQLAlchemy `.filter_by()`,
+           Django `.objects.filter()`, `werkzeug.security.safe_join`, `Path.resolve().is_relative_to()`,
+           `urlsplit().netloc`) as `is_protected_decoy=True`.
+        """
+        code = '''
+import os
+import sqlite3
+from pathlib import Path
+from urllib.parse import urlsplit
+import bleach
+from werkzeug.security import safe_join
+from flask import Flask, request, make_response, redirect
+
+app = Flask(__name__)
+
+def repo_hop3(sql_filter):
+    conn = sqlite3.connect(":memory:")
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM audit_logs WHERE filter = '{sql_filter}'")
+
+def service_hop2(extracted_filter):
+    return repo_hop3(extracted_filter)
+
+def controller_hop1(filter_val):
+    return service_hop2(filter_val)
+
+@app.route("/api/audit/search", methods=["POST"])
+def audit_search():
+    data = request.get_json()
+    val = data.get("query_filter")
+    controller_hop1(val)
+    return {"status": "ok"}
+
+@app.route("/api/safe-sanitizers", methods=["GET"])
+def safe_sanitizers_route():
+    raw_html = request.args.get("bio", "")
+    clean_html = bleach.clean(raw_html)
+    resp = make_response(f"<div>{clean_html}</div>")
+
+    fname = request.args.get("file", "readme.txt")
+    safe_path = safe_join("/var/data", fname)
+    with open(safe_path, "r") as f:
+        _ = f.read()
+
+    base_dir = Path("/var/data").resolve()
+    target = (base_dir / fname).resolve()
+    if target.is_relative_to(base_dir):
+        with open(target, "r") as f2:
+            _ = f2.read()
+
+    next_url = request.args.get("next", "/home")
+    if not urlsplit(next_url).netloc:
+        return redirect(next_url)
+    return resp
+'''
+        with open(os.path.join(self.test_dir, "deep_app.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+
+        mapper = RouteMapper(self.test_dir)
+        mapper.scan()
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        findings = scanner.scan(route_mapper=mapper)
+
+        active = [f for f in findings if not f.is_protected_decoy]
+        decoys = [f for f in findings if f.is_protected_decoy]
+
+        # Only the 3-hop SQLi should be active, and its inferred parameter must be 'query_filter'
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0].cwe, "CWE-89")
+        self.assertEqual(active[0].param, "query_filter")
+        self.assertEqual(active[0].file_path, "deep_app.py")
+
+        # All sanitized sinks in safe_sanitizers_route must be marked as protected decoys
+        self.assertGreaterEqual(len(decoys), 3)
+
+    def test_dynamic_getattr_sca_unknown_never_downgraded(self):
+        """
+        Task A3.3 & A4.1: Verifies that dynamic `getattr(mod, dynamic_attr)` reflection
+        causes unreached vulnerable packages to be classified as `SCAReachabilityStatus.UNKNOWN`
+        and NEVER downgraded below `original_severity`.
+        """
+        from core.schemas import SCAReachabilityStatus
+        from engine.sca_reachability import SCAReachabilityEngine
+
+        with open(os.path.join(self.test_dir, "requirements.txt"), "w", encoding="utf-8") as f:
+            f.write("pyyaml==5.3.1\n")
+        dyn_getattr_code = """
+import yaml
+
+def invoke_dynamic(loader_name, payload):
+    fn = getattr(yaml, loader_name)
+    return fn(payload)
+"""
+        with open(os.path.join(self.test_dir, "reflect_runner.py"), "w", encoding="utf-8") as f:
+            f.write(dyn_getattr_code)
+
+        mapper = RouteMapper(self.test_dir)
+        mapper.scan()
+        sca = SCAReachabilityEngine(self.test_dir, route_mapper=mapper)
+        report = sca.analyze_reachability()
+        pyyaml_f = next(f for f in report.findings if f.package == "pyyaml")
+        self.assertEqual(pyyaml_f.status, SCAReachabilityStatus.UNKNOWN)
+        self.assertEqual(pyyaml_f.effective_severity, pyyaml_f.original_severity)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

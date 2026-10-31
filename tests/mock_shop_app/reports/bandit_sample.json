@@ -1,0 +1,66 @@
+{
+  "errors": [],
+  "generated_at": "2026-10-31T20:00:00Z",
+  "metrics": {
+    "_totals": {
+      "CONFIDENCE.HIGH": 3,
+      "SEVERITY.HIGH": 3
+    }
+  },
+  "results": [
+    {
+      "code": "22     query = f\"SELECT * FROM orders WHERE id = '{id}'\"\n23     conn = sqlite3.connect(\":memory:\")\n24     cursor = conn.cursor()\n25     cursor.execute(query)\n",
+      "col_offset": 4,
+      "end_col_offset": 25,
+      "filename": "services/order_service.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "HIGH",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 25,
+      "line_range": [22, 23, 24, 25],
+      "more_info": "https://bandit.readthedocs.io/en/1.7.8/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "67     host = request.form.get(\"host\", \"127.0.0.1\")\n68     exit_code = os.system(f\"ping -c 1 {host}\")\n",
+      "col_offset": 16,
+      "end_col_offset": 46,
+      "filename": "app.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {
+        "id": 78,
+        "link": "https://cwe.mitre.org/data/definitions/78.html"
+      },
+      "issue_severity": "HIGH",
+      "issue_text": "Starting a process with a shell, possible injection detected.",
+      "line_number": 68,
+      "line_range": [67, 68],
+      "more_info": "https://bandit.readthedocs.io/en/1.7.8/plugins/b605_start_process_with_a_shell.html",
+      "test_id": "B605",
+      "test_name": "start_process_with_a_shell"
+    },
+    {
+      "code": "27 STRIPE_LIVE_SECRET_KEY = \"mock_secret_key_mitigata_shop_demo\"\n",
+      "col_offset": 0,
+      "end_col_offset": 72,
+      "filename": "app.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {
+        "id": 798,
+        "link": "https://cwe.mitre.org/data/definitions/798.html"
+      },
+      "issue_severity": "HIGH",
+      "issue_text": "Possible hardcoded password/secret key.",
+      "line_number": 27,
+      "line_range": [27],
+      "more_info": "https://bandit.readthedocs.io/en/1.7.8/plugins/b105_hardcoded_password_string.html",
+      "test_id": "B105",
+      "test_name": "hardcoded_password_string"
+    }
+  ]
+}
