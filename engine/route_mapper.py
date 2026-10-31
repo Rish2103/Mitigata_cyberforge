@@ -500,10 +500,11 @@ class RouteMapper:
 
         py_files: List[Tuple[str, str]] = []
         js_files: List[Tuple[str, str]] = []
+        java_files: List[Tuple[str, str]] = []
 
         for dirpath, _, filenames in os.walk(self.root_dir):
             parts = os.path.normpath(dirpath).split(os.sep)
-            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build") for p in parts):
+            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build", "target") for p in parts):
                 continue
 
             for fname in sorted(filenames):
@@ -513,6 +514,8 @@ class RouteMapper:
                     py_files.append((full_path, rel_path))
                 elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
                     js_files.append((full_path, rel_path))
+                elif fname.endswith(".java"):
+                    java_files.append((full_path, rel_path))
 
         # Pass 1 on Python files: collect cross-file Blueprint / APIRouter prefixes & Pydantic models
         for full_path, rel_path in py_files:
@@ -557,6 +560,10 @@ class RouteMapper:
         # Pass 3 on JS/TS files (Bonus B-7: Node.js / Express support)
         if js_files:
             self._scan_express_files(js_files)
+
+        # Pass 4 on Java files (Bonus B-7: Java Spring Boot / Jakarta Servlet support)
+        if java_files:
+            self._scan_java_files(java_files)
 
         # Populate multi-hop called_func_details, called_functions, and compile regex matchers
         for r in self.routes:
@@ -1031,6 +1038,213 @@ class RouteMapper:
             if name not in ("if", "for", "while", "switch", "catch", "function", "return", "require", exclude_name):
                 called.add(name)
         return called
+
+    # -------------------------------------------------------------------------
+    # Bonus B-7: Java (Spring Boot / Jakarta Servlet) Route & Method Extraction
+    # -------------------------------------------------------------------------
+    def _scan_java_files(self, java_files: List[Tuple[str, str]]) -> None:
+        spring_verb_map = {
+            "GetMapping": "GET",
+            "PostMapping": "POST",
+            "PutMapping": "PUT",
+            "DeleteMapping": "DELETE",
+            "PatchMapping": "PATCH",
+        }
+        method_sig_re = re.compile(
+            r"^\s*(?:public|protected|private)\s+(?:static\s+)?(?:final\s+)?[\w<>\[\],\s\?]+\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)"
+        )
+        for full_path, rel_path in java_files:
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                lines = content.splitlines()
+
+                # Detect class-level @RequestMapping or @WebServlet prefix
+                class_prefix = ""
+                web_servlet_path = ""
+                for idx, raw_line in enumerate(lines):
+                    s_line = raw_line.strip()
+                    if re.search(r"\bclass\s+[A-Z]\w*", s_line):
+                        break
+                    m_cls_req = re.search(
+                        r"""@RequestMapping\s*\(\s*(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""",
+                        s_line,
+                    )
+                    if m_cls_req:
+                        class_prefix = m_cls_req.group(1).strip()
+                    m_servlet = re.search(
+                        r"""@WebServlet\s*\(\s*(?:(?:value|urlPatterns)\s*=\s*)?["']([^"']+)["']""",
+                        s_line,
+                    )
+                    if m_servlet:
+                        web_servlet_path = m_servlet.group(1).strip()
+
+                # Pass 1: Register all Java methods (for call-graph & dead-code reachability)
+                idx = 0
+                while idx < len(lines):
+                    raw_line = lines[idx]
+                    # Support multi-line method declarations up to 3 lines
+                    sig_window = " ".join(ln.strip() for ln in lines[idx : min(len(lines), idx + 3)])
+                    m_sig = method_sig_re.match(sig_window) if "(" in raw_line and not raw_line.strip().startswith(("@", "//", "/*", "*")) else None
+                    if m_sig and ("{" in sig_window):
+                        func_name = m_sig.group(1)
+                        raw_args = m_sig.group(2)
+                        if func_name not in ("if", "for", "while", "switch", "catch"):
+                            start_line = idx + 1
+                            end_line = self._find_js_block_end(lines, idx)
+                            block_text = "\n".join(lines[idx:end_line])
+                            params = self._extract_java_params(block_text, raw_args, "")
+                            called = self._extract_js_calls(block_text, exclude_name=func_name)
+                            self.func_to_file_lines[func_name] = (rel_path, start_line, end_line)
+                            self.call_graph.setdefault(func_name, set()).update(called)
+                            self.func_defs.setdefault(func_name, []).append(
+                                (rel_path, start_line, end_line, called, params)
+                            )
+                    idx += 1
+
+                # Pass 2: Scan for Spring Boot route annotations and Servlet handlers
+                for idx, raw_line in enumerate(lines):
+                    s_line = raw_line.strip()
+                    route_methods: List[str] = []
+                    sub_path = ""
+                    matched_annotation = False
+
+                    for ann_name, http_verb in spring_verb_map.items():
+                        m_ann = re.search(rf"@{ann_name}\b(?:\s*\((.*)\))?", s_line)
+                        if m_ann:
+                            matched_annotation = True
+                            route_methods = [http_verb]
+                            ann_args = m_ann.group(1) or ""
+                            m_p = re.search(r"""(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""", ann_args)
+                            if m_p:
+                                sub_path = m_p.group(1).strip()
+                            break
+
+                    if not matched_annotation and s_line.startswith("@RequestMapping"):
+                        # Ignore class-level @RequestMapping (followed by 'public class ...')
+                        lookahead = "\n".join(lines[idx : min(len(lines), idx + 5)])
+                        if not re.search(r"\bclass\s+[A-Z]\w*", lookahead):
+                            matched_annotation = True
+                            m_p = re.search(r"""(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""", s_line)
+                            if m_p:
+                                sub_path = m_p.group(1).strip()
+                            m_verb = re.findall(r"RequestMethod\.(GET|POST|PUT|DELETE|PATCH)", s_line)
+                            route_methods = m_verb if m_verb else ["GET"]
+
+                    # Check Jakarta/Java Servlet doGet / doPost inside @WebServlet class
+                    servlet_verb = None
+                    if not matched_annotation and web_servlet_path:
+                        m_do = re.search(r"\bprotected\s+void\s+do(Get|Post|Put|Delete)\s*\(", s_line)
+                        if m_do:
+                            servlet_verb = m_do.group(1).upper()
+                            matched_annotation = True
+                            route_methods = [servlet_verb]
+                            sub_path = web_servlet_path
+
+                    if not matched_annotation:
+                        continue
+
+                    # Locate the annotated Java method declaration within the next 1..6 lines
+                    method_idx = idx
+                    func_name = f"java_handler_{idx + 1}"
+                    raw_args = ""
+                    for scan_i in range(idx, min(len(lines), idx + 6)):
+                        cand_sig = " ".join(ln.strip() for ln in lines[scan_i : min(len(lines), scan_i + 3)])
+                        if cand_sig.startswith("@"):
+                            continue
+                        m_decl = method_sig_re.match(cand_sig)
+                        if m_decl:
+                            method_idx = scan_i
+                            func_name = m_decl.group(1)
+                            raw_args = m_decl.group(2)
+                            break
+
+                    start_line = idx + 1
+                    end_line = self._find_js_block_end(lines, method_idx)
+                    block_text = "\n".join(lines[idx:end_line])
+
+                    if servlet_verb:
+                        full_route_path = web_servlet_path
+                    else:
+                        full_route_path = self._join_prefixes(class_prefix, sub_path) or "/"
+
+                    params = self._extract_java_params(block_text, raw_args, full_route_path)
+                    called = self._extract_js_calls(block_text, exclude_name=func_name)
+                    auth_ctx = "none"
+                    if re.search(r"@(?:PreAuthorize|Secured|RolesAllowed)\b", block_text) or (
+                        'getHeader("Authorization")' in block_text or "SecurityContextHolder" in block_text
+                    ):
+                        auth_ctx = "spring_security"
+
+                    self.func_to_file_lines[func_name] = (rel_path, start_line, end_line)
+                    self.call_graph.setdefault(func_name, set()).update(called)
+                    self.func_defs.setdefault(func_name, []).append(
+                        (rel_path, start_line, end_line, called, params)
+                    )
+
+                    for m_verb in route_methods:
+                        self.routes.append(
+                            RouteEntry(
+                                method=m_verb,
+                                path_pattern=full_route_path,
+                                regex_pattern=_normalize_route_pattern_to_regex(full_route_path),
+                                file_path=rel_path,
+                                func_name=func_name,
+                                start_line=start_line,
+                                end_line=end_line,
+                                parameters=sorted(list(params)),
+                                called_funcs=sorted(list(called)),
+                                auth_context=auth_ctx,
+                                framework="spring",
+                            )
+                        )
+            except Exception:
+                pass
+
+    @staticmethod
+    def _extract_java_params(block_text: str, raw_args: str, route_path: str) -> Set[str]:
+        params: Set[str] = set()
+        # Path variables in route pattern: /api/orders/{id}
+        for m in re.finditer(r"\{([a-zA-Z_]\w*)\}", route_path or ""):
+            params.add(m.group(1))
+        # @RequestParam("q") or @RequestParam(value = "q", ...) or @PathVariable("id")
+        for m in re.finditer(
+            r"""@(?:RequestParam|PathVariable|RequestHeader)\s*\(\s*(?:(?:value|name)\s*=\s*)?["']([^"']+)["']""",
+            block_text,
+        ):
+            params.add(m.group(1))
+        # @RequestParam String host or @PathVariable Long orderId
+        for m in re.finditer(
+            r"@(?:RequestParam|PathVariable|RequestBody)(?:\s*\([^)]*\))?\s+(?:final\s+)?[\w<>\[\]\?]+\s+([a-zA-Z_]\w*)",
+            block_text,
+        ):
+            params.add(m.group(1))
+        # HttpServletRequest: request.getParameter("username") / req.getParameter("id")
+        for m in re.finditer(r"""\b(?:request|req|httpRequest)\s*\.\s*getParameter\s*\(\s*["']([^"']+)["']\s*\)""", block_text):
+            params.add(m.group(1))
+        # Map.get("host") on @RequestBody Map<String, String> body
+        for m in re.finditer(r"""\b(?:body|payload|params|data)\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)""", block_text):
+            params.add(m.group(1))
+        # Plain method arguments (excluding servlet/spring framework objects)
+        ignored_types = {
+            "HttpServletRequest",
+            "HttpServletResponse",
+            "HttpSession",
+            "Model",
+            "ModelMap",
+            "RedirectAttributes",
+            "BindingResult",
+            "Principal",
+            "Authentication",
+        }
+        for part in (raw_args or "").split(","):
+            tokens = re.sub(r"@\w+(?:\s*\([^)]*\))?", "", part).strip().split()
+            if len(tokens) >= 2:
+                param_type = tokens[-2].split("<")[0].strip()
+                param_name = tokens[-1].strip()
+                if param_type not in ignored_types and re.match(r"^[a-zA-Z_]\w*$", param_name):
+                    params.add(param_name)
+        return params
 
     # -------------------------------------------------------------------------
     # Route Resolution & Multi-Hop Call Graph Queries

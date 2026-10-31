@@ -497,6 +497,9 @@ class SASTScanner:
                 elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
                     js_findings = self._scan_js_file(full_path, rel_path, reachable_files, active_mapper)
                     all_findings.extend(js_findings)
+                elif fname.endswith(".java"):
+                    java_findings = self._scan_java_file(full_path, rel_path, reachable_files, active_mapper)
+                    all_findings.extend(java_findings)
 
         # Propagate HTTP parameter names across 3-hop helper call chains & intra-function aliases
         for _ in range(5):
@@ -836,6 +839,256 @@ class SASTScanner:
                                 severity=Severity.HIGH,
                                 file_path=rel_path,
                                 line=lineno,
+                                code_snippet=line_s,
+                                is_protected_decoy=False,
+                            )
+                        )
+
+            filtered: List[CanonicalFinding] = []
+            for f in findings:
+                checked = DecoyFilter.filter_finding(
+                    f,
+                    enclosing_snippet=f.code_snippet or "",
+                    reachable_files=reachable_files,
+                    route_mapper=route_mapper,
+                )
+                filtered.append(checked)
+            return filtered
+        except Exception:
+            return []
+
+    # -------------------------------------------------------------------------
+    # Bonus B-7: Java (Spring Boot / Jakarta Servlet) SAST & Safe Decoy Scanner
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _infer_java_param(line_s: str, context_window: str) -> Optional[str]:
+        # 1. Direct request.getParameter("param") on the sink line
+        m_req = re.search(
+            r"""\b(?:request|req|httpRequest)\s*\.\s*getParameter\s*\(\s*["']([^"']+)["']\s*\)""",
+            line_s,
+        )
+        if m_req:
+            return m_req.group(1)
+
+        # 2. Build local Java variable -> HTTP parameter name map from enclosing method window
+        var_to_param: Dict[str, str] = {}
+        for m in re.finditer(
+            r"""\b(?:String|int|long|Integer|Long|Object|var)\s+([a-zA-Z_]\w*)\s*=\s*(?:request|req|httpRequest)\s*\.\s*getParameter\s*\(\s*["']([^"']+)["']\s*\)""",
+            context_window,
+        ):
+            var_to_param[m.group(1)] = m.group(2)
+
+        for m in re.finditer(
+            r"""\b(?:String|Object|var)\s+([a-zA-Z_]\w*)\s*=\s*(?:body|payload|params|data)\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)""",
+            context_window,
+        ):
+            var_to_param[m.group(1)] = m.group(2)
+
+        # @RequestParam("q") String query  OR  @RequestParam String host
+        for m in re.finditer(
+            r"""@(?:RequestParam|PathVariable)(?:\s*\(\s*(?:(?:value|name)\s*=\s*)?["']([^"']+)["'][^)]*\))?\s+(?:final\s+)?[\w<>\[\]\?]+\s+([a-zA-Z_]\w*)""",
+            context_window,
+        ):
+            http_name = m.group(1) or m.group(2)
+            var_name = m.group(2)
+            var_to_param[var_name] = http_name
+
+        # Propagate 1-hop local String assignments (e.g., String sql = "SELECT ..." + orderId;)
+        for m_assign in re.finditer(r"\bString\s+([a-zA-Z_]\w*)\s*=\s*([^;]+);", context_window):
+            lhs, rhs = m_assign.group(1), m_assign.group(2)
+            for tok in re.findall(r"\b[a-zA-Z_]\w*\b", rhs):
+                if tok in var_to_param:
+                    var_to_param[lhs] = var_to_param[tok]
+
+        for tok in re.findall(r"\b[a-zA-Z_]\w*\b", line_s):
+            if tok in var_to_param:
+                return var_to_param[tok]
+        if len(var_to_param) == 1:
+            return next(iter(var_to_param.values()))
+        return None
+
+    def _scan_java_file(
+        self,
+        full_path: str,
+        rel_path: str,
+        reachable_files: Optional[Set[str]],
+        route_mapper: Optional[Any] = None,
+    ) -> List[CanonicalFinding]:
+        findings: List[CanonicalFinding] = []
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            lines = content.splitlines()
+
+            for idx, raw_line in enumerate(lines):
+                lineno = idx + 1
+                line_s = raw_line.strip()
+                if not line_s or line_s.startswith(("//", "/*", "*")):
+                    continue
+
+                window_start = max(0, idx - 8)
+                window_end = min(len(lines), idx + 5)
+                context_window = "\n".join(lines[window_start:window_end])
+                java_param = self._infer_java_param(line_s, context_window)
+
+                # Resolve enclosing Java method name from RouteMapper if available
+                fn_name: Optional[str] = None
+                if route_mapper is not None:
+                    matched_routes = route_mapper.find_routes_for_finding(rel_path, lineno)
+                    if matched_routes:
+                        fn_name = matched_routes[0].func_name
+
+                # 1. CWE-89: Java SQL Injection & Safe PreparedStatement Decoy
+                is_sql_exec = bool(
+                    re.search(
+                        r"\b(?:stmt|statement|conn|connection|jdbcTemplate|entityManager)\s*\.\s*(?:executeQuery|executeUpdate|execute|query|queryForObject| queryForList|update|createNativeQuery)\s*\(",
+                        line_s,
+                    )
+                )
+                is_prep_stmt = bool(re.search(r"\bprepareStatement\s*\(", line_s))
+                if is_sql_exec or is_prep_stmt:
+                    has_concat = "+" in line_s or "String.format(" in line_s or (
+                        "+" in context_window and bool(re.search(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b", context_window, re.IGNORECASE))
+                    )
+                    is_safe_prep = is_prep_stmt and "?" in line_s and "+" not in line_s and "String.format(" not in line_s
+                    if has_concat or is_safe_prep:
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-89", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-89",
+                                cwe_name=CWE_NAMES.get("CWE-89"),
+                                severity=Severity.CRITICAL,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
+                                param=java_param,
+                                code_snippet=line_s,
+                                is_protected_decoy=is_safe_prep,
+                                decoy_reason=(
+                                    "Safe parameterized SQL query: Java PreparedStatement with '?' bound placeholders"
+                                    if is_safe_prep
+                                    else None
+                                ),
+                            )
+                        )
+
+                # 2. CWE-78: Java OS Command Injection & Safe ProcessBuilder Decoy
+                is_runtime_exec = bool(re.search(r"Runtime\.getRuntime\(\)\.exec\s*\(", line_s))
+                is_proc_builder = bool(re.search(r"new\s+ProcessBuilder\s*\(", line_s))
+                if is_runtime_exec or is_proc_builder:
+                    invokes_shell = bool(re.search(r"""["'](?:sh|bash|/bin/sh|cmd|cmd\.exe)["']\s*,\s*["'](?:-c|/c)["']""", line_s))
+                    has_concat = "+" in line_s or "String.format(" in line_s
+                    is_safe_pb = is_proc_builder and not invokes_shell and not has_concat
+                    if is_runtime_exec or invokes_shell or has_concat or is_safe_pb:
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-78", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-78",
+                                cwe_name=CWE_NAMES.get("CWE-78"),
+                                severity=Severity.CRITICAL,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
+                                param=java_param,
+                                code_snippet=line_s,
+                                is_protected_decoy=is_safe_pb,
+                                decoy_reason=(
+                                    "Safe command execution: Java ProcessBuilder argument list without shell interpretation"
+                                    if is_safe_pb
+                                    else None
+                                ),
+                            )
+                        )
+
+                # 3. CWE-79: Java Reflected XSS & Safe HtmlUtils.htmlEscape Decoy
+                if (
+                    re.search(r"\bgetWriter\(\)\s*\.\s*(?:write|print|println)\s*\(", line_s)
+                    or re.search(r"\bResponseEntity\s*\.\s*ok\s*\(", line_s)
+                ) and _HTML_TAG_RE.search(line_s):
+                    if "+" in line_s or "String.format(" in line_s:
+                        is_safe_xss, xss_reason = DecoyFilter.is_safe_xss(None, context_window)
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-79", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-79",
+                                cwe_name=CWE_NAMES.get("CWE-79"),
+                                severity=Severity.HIGH,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
+                                param=java_param,
+                                code_snippet=line_s,
+                                is_protected_decoy=is_safe_xss,
+                                decoy_reason=xss_reason if is_safe_xss else None,
+                            )
+                        )
+
+                # 4. CWE-22: Java Path Traversal & Safe .normalize().startsWith() Decoy
+                if re.search(r"\b(?:new\s+FileInputStream|Files\.readString|Files\.readAllBytes|Paths\.get)\s*\(", line_s):
+                    if "+" in line_s or (java_param and java_param in line_s):
+                        is_safe_path, path_reason = DecoyFilter.is_safe_path_traversal(None, context_window)
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-22", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-22",
+                                cwe_name=CWE_NAMES.get("CWE-22"),
+                                severity=Severity.HIGH,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
+                                param=java_param,
+                                code_snippet=line_s,
+                                is_protected_decoy=is_safe_path,
+                                decoy_reason=path_reason if is_safe_path else None,
+                            )
+                        )
+
+                # 5. CWE-601: Java Open Redirect
+                if re.search(r"\bsendRedirect\s*\(", line_s) or (
+                    '"redirect:"' in line_s and "+" in line_s
+                ):
+                    if not re.search(r"""\bsendRedirect\s*\(\s*["'][^"']+["']\s*\)""", line_s):
+                        is_safe_red, red_reason = DecoyFilter.is_safe_redirect(None, context_window)
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-601", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-601",
+                                cwe_name=CWE_NAMES.get("CWE-601"),
+                                severity=Severity.MEDIUM,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
+                                param=java_param,
+                                code_snippet=line_s,
+                                is_protected_decoy=is_safe_red,
+                                decoy_reason=red_reason if is_safe_red else None,
+                            )
+                        )
+
+                # 6. CWE-798: Java Hard-coded Secrets
+                sec_match = re.search(
+                    r"""(?:private|public|protected|static|final|\bString\b)\s+[\w\s]*\b([a-zA-Z0-9_]*(?:api[_-]?key|secret|password|passwd|jwt[_-]?secret|private[_-]?key|auth[_-]?token)[a-zA-Z0-9_]*)\s*=\s*["']([^"']{6,})["']""",
+                    line_s,
+                    re.IGNORECASE,
+                )
+                if sec_match and "System.getenv" not in line_s and "getProperty" not in line_s:
+                    val = sec_match.group(2).strip()
+                    if val.lower() not in ("changeme", "placeholder", "none", "null"):
+                        findings.append(
+                            CanonicalFinding(
+                                id=_fingerprint_sast("CWE-798", rel_path, lineno),
+                                source=FindingSource.SAST,
+                                cwe="CWE-798",
+                                cwe_name=CWE_NAMES.get("CWE-798"),
+                                severity=Severity.HIGH,
+                                file_path=rel_path,
+                                line=lineno,
+                                func_name=fn_name,
                                 code_snippet=line_s,
                                 is_protected_decoy=False,
                             )

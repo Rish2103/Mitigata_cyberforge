@@ -914,6 +914,52 @@ def invoke_dynamic(loader_name, payload):
         self.assertEqual(pyyaml_f.status, SCAReachabilityStatus.UNKNOWN)
         self.assertEqual(pyyaml_f.effective_severity, pyyaml_f.original_severity)
 
+    def test_java_spring_boot_polyglot_router_sast_decoy_and_correlation(self):
+        """
+        Bonus B-7 (Java Polyglot Support):
+        Verifies that .java (Spring Boot) files are scanned for routes, real SAST sinks,
+        B-2 safe decoys (PreparedStatement, ProcessBuilder, HtmlUtils.htmlEscape),
+        and correlate with DAST findings into Confirmed issues.
+        """
+        java_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "examples", "java_spring_demo"))
+        mapper = RouteMapper(java_dir)
+        routes = mapper.scan()
+        self.assertGreaterEqual(len(routes), 8)
+        route_paths = {(r.method, r.path_pattern) for r in routes}
+        self.assertIn(("GET", "/api/java/orders/search"), route_paths)
+        self.assertIn(("POST", "/api/java/diagnostics/ping"), route_paths)
+
+        scanner = SASTScanner(java_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        active = [f for f in sast_findings if not f.is_protected_decoy]
+        decoys = [f for f in sast_findings if f.is_protected_decoy]
+
+        # Must suppress PreparedStatement, ProcessBuilder, and HtmlUtils.htmlEscape safe decoys
+        self.assertGreaterEqual(len(decoys), 3)
+        active_cwes = {f.cwe for f in active}
+        self.assertTrue({"CWE-89", "CWE-78", "CWE-79", "CWE-22", "CWE-601", "CWE-798"}.issubset(active_cwes))
+
+        # Correlate Java SQLi SAST finding with runtime DAST finding on /api/java/orders/search
+        dast_java_sqli = CanonicalFinding(
+            id="dast_java_sqli_1",
+            source=FindingSource.DAST,
+            cwe="CWE-89",
+            severity=Severity.CRITICAL,
+            url="http://127.0.0.1:8080/api/java/orders/search?q=test",
+            method="GET",
+            param="q",
+            payload="' OR '1'='1",
+            evidence="java.sql.SQLException: syntax error",
+        )
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast_findings, [dast_java_sqli])
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].cwe, "CWE-89")
+        self.assertIn("/api/java/orders/search", confirmed[0].matched_route)
+        self.assertIn("searchOrders()", confirmed[0].matched_route)
+        self.assertEqual(confirmed[0].param, "q")
+
 
 if __name__ == "__main__":
     unittest.main()

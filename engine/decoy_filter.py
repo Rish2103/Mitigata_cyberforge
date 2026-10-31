@@ -98,6 +98,10 @@ class DecoyFilter:
         code_lower = enclosing_code.lower()
         if ".filter_by(" in code_lower or ".objects.filter(" in code_lower or "session.query(" in code_lower and ".filter_by(" in code_lower:
             return True, "Safe ORM query: SQLAlchemy .filter_by() / Django ORM .filter() binds parameters safely"
+        if "preparestatement(" in code_lower and "?" in enclosing_code and "+" not in enclosing_code:
+            return True, "Safe parameterized SQL query: Java PreparedStatement with '?' bound placeholders"
+        if ("setstring(" in code_lower or "setint(" in code_lower or "setlong(" in code_lower) and "preparestatement(" in code_lower:
+            return True, "Safe parameterized SQL query: Java PreparedStatement with bound setter parameters"
 
         if call_node is not None:
             if isinstance(call_node.func, ast.Attribute) and call_node.func.attr in ("filter_by", "filter"):
@@ -176,6 +180,9 @@ class DecoyFilter:
             or "bleach.clean(" in code_lower
             or "dompurify.sanitize(" in code_lower
             or "escapehtml(" in code_lower
+            or "htmlutils.htmlescape(" in code_lower
+            or "stringescapeutils.escapehtml" in code_lower
+            or "encode.forhtml(" in code_lower
         ):
             return True, "Safe HTML rendering: user input explicitly sanitized via HTML escape/cleaner"
         return False, ""
@@ -193,7 +200,7 @@ class DecoyFilter:
             return True, "Safe file operation: path joined safely via werkzeug.security.safe_join"
         if "is_relative_to(" in code_lower:
             return True, "Safe file operation: canonicalized path verified via pathlib.Path.resolve().is_relative_to()"
-        if ("os.path.realpath" in code_lower or "path.resolve(" in code_lower or ".resolve()" in code_lower) and (
+        if ("os.path.realpath" in code_lower or "path.resolve(" in code_lower or ".resolve()" in code_lower or ".normalize()" in code_lower) and (
             "startswith" in code_lower or "commonpath" in code_lower or "is_relative_to" in code_lower
         ):
             return True, "Safe file operation: canonicalized path validated with prefix/startswith guard"
