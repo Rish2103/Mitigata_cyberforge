@@ -1253,6 +1253,38 @@ def apply_coupon_and_referral_sql(coupon_code, referral_code):
         self.assertIn("referral_code", confirmed[0].code_snippet)
         self.assertIn("coupon_code", code_only[0].code_snippet)
 
+    def test_phase5_unseen_app_sim_and_preflight_doctor_100pct_correlation(self):
+        """
+        Phase 5 Verification:
+        Run the Unseen-App Pre-Flight Doctor (`tests.phase5_unseen_doctor`) against
+        `tests/unseen_app_sim` and verify:
+          - 12 routes discovered across multi-file Flask Blueprints with 0 unmapped decorators
+          - 6 active SAST findings and 5 B-2 safe decoys suppressed (0% false alarms)
+          - 5 Confirmed issues, 1 Code-Only issue, 1 Runtime-Only issue (100.0% correlation rate >= 65% Great threshold)
+          - 1 Reachable SCA package (`pyyaml`), 1 Unreachable (`urllib3`), 1 Typosquat (`reqeusts`)
+          - 90.0% DAST scope reduction (`Naive=60 -> Reduced=6`)
+          - JSON and OASIS SARIF v2.1.0 export
+        """
+        from tests.phase5_unseen_doctor import run_phase5_unseen_doctor
+
+        res = run_phase5_unseen_doctor(export_dir=self.test_dir)
+        self.assertEqual(res["routes_discovered"], 12)
+        self.assertEqual(len(res["unmapped_decorators"]), 0)
+        self.assertEqual(res["active_sast_count"], 6)
+        self.assertEqual(res["suppressed_decoy_count"], 5)
+        self.assertEqual(res["confirmed_count"], 5)
+        self.assertEqual(res["code_only_count"], 1)
+        self.assertEqual(res["runtime_only_count"], 1)
+        self.assertEqual(res["correlation_rate_pct"], 100.0)
+        self.assertTrue(res["meets_great_threshold_gt_65_pct"])
+        self.assertEqual(res["sca_findings_count"], 3)
+        self.assertEqual(res["sca_reachable_count"], 1)
+        self.assertEqual(res["scope_reduction"]["naive_probe_count"], 60)
+        self.assertEqual(res["scope_reduction"]["reduced_probe_count"], 6)
+        self.assertEqual(res["scope_reduction"]["probes_saved_pct"], 90.0)
+        self.assertTrue(os.path.isfile(res["exported_json"]))
+        self.assertTrue(os.path.isfile(res["exported_sarif"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1101,7 +1101,9 @@
           <option value="">Latest Scan State</option>
         </select>
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button id="btnPresetMockShop" type="button" class="btn" onclick="applyScanPreset('mock_shop')" title="Switch to App 1: Mock Shop (:5000)">App 1: Mock Shop (:5000)</button>
+        <button id="btnPresetUnseenApp" type="button" class="btn" onclick="applyScanPreset('unseen_app')" title="Switch to App 2: Unseen Billing App (:5001)">App 2: Unseen Billing (:5001)</button>
         <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-family:var(--font-mono); cursor:pointer;">
           <input id="checkLiveDast" type="checkbox" checked />
           <span>2-Phase DAST</span>
@@ -2479,6 +2481,19 @@
         pill.classList.remove('active', 'done');
         if (i < stepIndex) pill.classList.add('done');
         if (i === stepIndex) pill.classList.add('active');
+      }
+    }
+
+    function applyScanPreset(presetKey) {
+      const urlInput = document.getElementById('inputTargetUrl');
+      const dirInput = document.getElementById('inputSourceDir');
+      if (!urlInput || !dirInput) return;
+      if (presetKey === 'unseen_app') {
+        urlInput.value = 'http://127.0.0.1:5001';
+        dirInput.value = './tests/unseen_app_sim';
+      } else {
+        urlInput.value = 'http://127.0.0.1:5000';
+        dirInput.value = './tests/mock_shop_app';
       }
     }
 

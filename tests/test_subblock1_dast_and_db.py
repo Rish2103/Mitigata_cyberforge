@@ -1853,4 +1853,59 @@ def step2_query(acct):
         os.environ.pop("GORDON_DB_PATH", None)
 
 
+def test_phase5_e2e_unseen_app_scan_and_ui_presets(tmp_path) -> None:
+    """
+    Phase 5 Verification (Person A + Person B):
+      1. Verify UI preset buttons (`btnPresetMockShop`, `btnPresetUnseenApp`, `applyScanPreset`)
+         and `PITCH_RUNBOOK.md` exist and respect all UI constraints (zero em-dashes, zero en-dashes).
+      2. Spin up `tests/unseen_app_sim/app.py` via WSGI and run a full `POST /scans` against
+         `./tests/unseen_app_sim` through `main:app`, confirming 12 routes, 5 suppressed decoys,
+         and 5 Confirmed issues across `app.py`, `routes/billing.py`, and `services/payment_service.py`.
+    """
+    from pathlib import Path
+    from tests.phase5_unseen_doctor import build_seeded_dast_for_unseen_app
+
+    project_root = Path(__file__).resolve().parent.parent
+    ui_html = (project_root / "ui/index.html").read_text(encoding="utf-8")
+    assert "btnPresetMockShop" in ui_html
+    assert "btnPresetUnseenApp" in ui_html
+    assert "applyScanPreset" in ui_html
+    assert "\u2014" not in ui_html
+    assert "\u2013" not in ui_html
+    assert (project_root / "PITCH_RUNBOOK.md").is_file()
+
+    db_file = str(tmp_path / "phase5_unseen.db")
+    os.environ["GORDON_DB_PATH"] = db_file
+    try:
+        client = TestClient(gordon_api_app)
+        seeded_dast = [
+            f.model_dump() for f in build_seeded_dast_for_unseen_app("http://127.0.0.1:5001")
+        ]
+        unseen_dir = str(project_root / "tests" / "unseen_app_sim")
+        resp = client.post(
+            "/scans",
+            json={
+                "app_name": "unseen-billing-portal",
+                "target_url": "http://127.0.0.1:5001",
+                "source_dir": unseen_dir,
+                "run_live_dast": False,
+                "seeded_dast_findings": seeded_dast,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["confirmed_count"] == 5
+        assert body["safe_decoys_suppressed"] == 5
+        assert body["scope_reduction"]["probes_saved_pct"] == 90.0
+
+        issues_resp = client.get(f"/issues?scan_id={body['scan_id']}")
+        assert issues_resp.status_code == 200
+        issues = issues_resp.json()
+        confirmed_cwes = {i["cwe"] for i in issues if i["status"] == "Confirmed"}
+        assert confirmed_cwes == {"CWE-89", "CWE-79", "CWE-78", "CWE-22", "CWE-601"}
+    finally:
+        os.environ.pop("GORDON_DB_PATH", None)
+
+
+
 

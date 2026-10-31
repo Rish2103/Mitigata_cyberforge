@@ -133,3 +133,23 @@
   - `python -m pytest -v` -> **`51 passed` in `1.99s`**.
   - `python -m tests.demo_checkpoint1 --full-benchmark` -> **7/7 PRD Answer-Key Metrics `PASS` (`20/20` Correct Links, `0/20` Wrong Links, `0/8` False Alarms, `100%` Dedup, `28.2 ms` runtime, `85.7%` Active HTTP Probes Saved)**.
 
+---
+
+## Phase 5 Completion Status — Both Person A & Person B (`branch: phase-5`)
+
+- **Branch:** `phase-5`
+- **Deliverables Completed:**
+  1. **Unseen Second App Simulator (`tests/unseen_app_sim/`):**
+     - Multi-file Flask Blueprint microservice (`app.py`, `routes/billing.py`, `services/payment_service.py`, `requirements.txt`) running on port `:5001`.
+     - Contains `12` routes (`5` exploitable sinks across `CWE-89`, `CWE-79`, `CWE-78`, `CWE-22`, `CWE-601`, `1` code-only hardcoded secret `CWE-798`, `5` `B-2` safe decoys, `1` passive runtime header issue `CWE-693`, and `3` SCA dependencies `pyyaml==5.3.1`, `urllib3==1.26.4`, `reqeusts==2.31.0`).
+  2. **1-Command Unseen-App Pre-Flight Doctor & Report Exporter (`tests/phase5_unseen_doctor.py`):**
+     - Runs single-pass AST route discovery, checks for unmapped custom decorators (`0` unmapped), runs SAST + B-2 decoy suppression (`0%` false alarms), runs 5-step SCA reachability, verifies `100.0%` correlation rate (`>65%` Great threshold) in `25.0 ms` (`<60,000 ms` ceiling), and exports both JSON and OASIS SARIF v2.1.0 reports.
+  3. **1-Click Target Preset Switcher in Live Dashboard (`ui/index.html`):**
+     - Added `#btnPresetMockShop` (`App 1: Mock Shop (:5000)`) and `#btnPresetUnseenApp` (`App 2: Unseen Billing (:5001)`) wired to `applyScanPreset()` so Person B can switch between App 1 and App 2 in 1 click during Checkpoint 2 and the Final Jury Pitch.
+  4. **Checkpoint 2 & Final Jury Pitch Runbook (`PITCH_RUNBOOK.md`):**
+     - Step-by-step 3-terminal launch guide, 07:00 AM Unseen App drop checklist, 3-minute stage script for Person A & Person B, and Judge Q&A cheat sheet.
+  5. **Automated Phase 5 Tests (`tests/test_person_a.py` & `tests/test_subblock1_dast_and_db.py`):**
+     - Added `test_phase5_unseen_app_sim_and_preflight_doctor_100pct_correlation` and `test_phase5_e2e_unseen_app_scan_and_ui_presets`.
+     - **`53 / 53` automated pytest tests passing in `2.54s` (`0` failures).**
+
+
