@@ -26,6 +26,7 @@ from core.schemas import (
     RouteEntry,
     SCAFinding,
     ScanSummary,
+    ScopeReductionReport,
     compute_issue_risk_score,
 )
 
@@ -88,7 +89,8 @@ class DatabaseStore:
                     runtime_only_count INTEGER DEFAULT 0,
                     auto_verified_count INTEGER DEFAULT 0,
                     sca_findings_count INTEGER DEFAULT 0,
-                    total_fair_exposure_inr_lakhs REAL DEFAULT 0.0
+                    total_fair_exposure_inr_lakhs REAL DEFAULT 0.0,
+                    scope_reduction_json TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS routes (
@@ -182,6 +184,13 @@ class DatabaseStore:
                 );
                 """
             )
+            # Ensure existing SQLite databases created before Phase 2 have `scope_reduction_json`
+            cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(scans)").fetchall()
+            }
+            if "scope_reduction_json" not in cols:
+                conn.execute("ALTER TABLE scans ADD COLUMN scope_reduction_json TEXT;")
 
     def create_scan(
         self,
@@ -580,6 +589,20 @@ class DatabaseStore:
                 )
         return len(sca_findings)
 
+    @staticmethod
+    def _enrich_scope_reduction(
+        report: Optional[ScopeReductionReport],
+    ) -> Optional[ScopeReductionReport]:
+        """Attach Task B2.3 Judge Complexity Banner aliases onto `ScopeReductionReport`."""
+        if report is None:
+            return None
+        try:
+            setattr(report, "drifted_routes", report.runtime_drift_routes)
+            setattr(report, "time_complexity_summary", report.time_complexity)
+        except Exception:
+            pass
+        return report
+
     def finalize_scan(
         self,
         scan_id: int,
@@ -590,6 +613,7 @@ class DatabaseStore:
         safe_decoys_suppressed: int = 0,
         issues: Optional[List[CorrelatedIssue]] = None,
         sca_findings_count: int = 0,
+        scope_reduction: Optional[ScopeReductionReport] = None,
     ) -> ScanSummary:
         """Update scan summary statistics and return a `ScanSummary` object."""
         issues_list = issues or []
@@ -598,6 +622,10 @@ class DatabaseStore:
         runtime_only_count = sum(1 for i in issues_list if i.status == "Runtime only")
         auto_verified_count = sum(1 for i in issues_list if i.auto_verified)
         total_fair = round(sum(i.fair_exposure_inr_lakhs for i in issues_list), 2)
+        enriched_scope = self._enrich_scope_reduction(scope_reduction)
+        scope_json = (
+            enriched_scope.model_dump_json() if enriched_scope is not None else None
+        )
 
         with self._connect() as conn:
             conn.execute(
@@ -614,7 +642,8 @@ class DatabaseStore:
                     runtime_only_count = ?,
                     auto_verified_count = ?,
                     sca_findings_count = ?,
-                    total_fair_exposure_inr_lakhs = ?
+                    total_fair_exposure_inr_lakhs = ?,
+                    scope_reduction_json = ?
                 WHERE id = ?
                 """,
                 (
@@ -630,6 +659,7 @@ class DatabaseStore:
                     auto_verified_count,
                     sca_findings_count,
                     total_fair,
+                    scope_json,
                     scan_id,
                 ),
             )
@@ -653,6 +683,7 @@ class DatabaseStore:
             auto_verified_count=auto_verified_count,
             sca_findings_count=sca_findings_count,
             total_fair_exposure_inr_lakhs=total_fair,
+            scope_reduction=enriched_scope,
         )
 
     @staticmethod
@@ -787,32 +818,51 @@ class DatabaseStore:
                 ).fetchall()
         return [SCAFinding.model_validate_json(r["sca_json"]) for r in rows]
 
+    def _row_to_scan_summary(self, r: sqlite3.Row) -> ScanSummary:
+        scope_report: Optional[ScopeReductionReport] = None
+        raw_scope = r["scope_reduction_json"] if "scope_reduction_json" in r.keys() else None
+        if raw_scope:
+            try:
+                scope_report = self._enrich_scope_reduction(
+                    ScopeReductionReport.model_validate_json(raw_scope)
+                )
+            except Exception:
+                scope_report = None
+
+        return ScanSummary(
+            scan_id=int(r["id"]),
+            app_name=r["app_name"],
+            source_dir=r["source_dir"],
+            target_url=r["target_url"],
+            started_at=r["started_at"],
+            duration_seconds=float(r["duration_seconds"] or 0.0),
+            routes_discovered=int(r["routes_discovered"] or 0),
+            raw_sast_findings=int(r["raw_sast_findings"] or 0),
+            raw_dast_findings=int(r["raw_dast_findings"] or 0),
+            safe_decoys_suppressed=int(r["safe_decoys_suppressed"] or 0),
+            total_issues=int(r["total_issues"] or 0),
+            confirmed_count=int(r["confirmed_count"] or 0),
+            code_only_count=int(r["code_only_count"] or 0),
+            runtime_only_count=int(r["runtime_only_count"] or 0),
+            auto_verified_count=int(r["auto_verified_count"] or 0),
+            sca_findings_count=int(r["sca_findings_count"] or 0),
+            total_fair_exposure_inr_lakhs=float(r["total_fair_exposure_inr_lakhs"] or 0.0),
+            scope_reduction=scope_report,
+        )
+
     def get_scans(self) -> List[ScanSummary]:
         """List all executed scans ordered most-recent first."""
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM scans ORDER BY id DESC").fetchall()
-        return [
-            ScanSummary(
-                scan_id=int(r["id"]),
-                app_name=r["app_name"],
-                source_dir=r["source_dir"],
-                target_url=r["target_url"],
-                started_at=r["started_at"],
-                duration_seconds=float(r["duration_seconds"] or 0.0),
-                routes_discovered=int(r["routes_discovered"] or 0),
-                raw_sast_findings=int(r["raw_sast_findings"] or 0),
-                raw_dast_findings=int(r["raw_dast_findings"] or 0),
-                safe_decoys_suppressed=int(r["safe_decoys_suppressed"] or 0),
-                total_issues=int(r["total_issues"] or 0),
-                confirmed_count=int(r["confirmed_count"] or 0),
-                code_only_count=int(r["code_only_count"] or 0),
-                runtime_only_count=int(r["runtime_only_count"] or 0),
-                auto_verified_count=int(r["auto_verified_count"] or 0),
-                sca_findings_count=int(r["sca_findings_count"] or 0),
-                total_fair_exposure_inr_lakhs=float(r["total_fair_exposure_inr_lakhs"] or 0.0),
-            )
-            for r in rows
-        ]
+        return [self._row_to_scan_summary(r) for r in rows]
+
+    def get_scan_by_id(self, scan_id: int) -> Optional[ScanSummary]:
+        """Retrieve a single `ScanSummary` (including `scope_reduction` telemetry) by `scan_id`."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
+        if row is None:
+            return None
+        return self._row_to_scan_summary(row)
 
     def compare_scans(self, base_scan_id: int, target_scan_id: int) -> Dict[str, Any]:
         """

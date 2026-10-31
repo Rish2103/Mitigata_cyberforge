@@ -45,9 +45,11 @@ from core.config import (
 from core.schemas import (
     CanonicalFinding,
     RouteEntry,
+    ScopeReductionReport,
     extract_url_path,
     normalize_route_template,
 )
+from engine.scope_reducer import ScopeReducer, compute_scope_reduction
 
 # ---------------------------------------------------------------------------
 # Diagnostic Canary Constants & Detection Signatures
@@ -157,13 +159,81 @@ class DASTScanner:
         self.transport = transport
         self.enable_crawl = enable_crawl
         self.enable_passive_checks = enable_passive_checks
+        self.last_scope_reduction: Optional[ScopeReductionReport] = None
+
+    @staticmethod
+    def _enrich_scope_report(report: ScopeReductionReport) -> ScopeReductionReport:
+        """Attach Task B2.3 telemetry alias attributes onto `ScopeReductionReport`."""
+        try:
+            setattr(report, "drifted_routes", report.runtime_drift_routes)
+            setattr(report, "time_complexity_summary", report.time_complexity)
+        except Exception:
+            pass
+        return report
+
+    def _resolve_active_probe_plan(
+        self,
+        seeded_routes: List[RouteEntry],
+        all_routes: List[RouteEntry],
+        sast_findings: Optional[List[CanonicalFinding]] = None,
+        probe_plan: Optional[ScopeReductionReport] = None,
+        route_mapper: Optional[Any] = None,
+    ) -> Optional[ScopeReductionReport]:
+        """
+        Build or update the Adaptive DAST Scope Reduction plan (`ScopeReductionReport`)
+        combining AST routes, SAST findings, and live crawled endpoints (`EXACT_REPLICA`
+        vs `RUNTIME_DRIFT_EXTRA`).
+        """
+        if probe_plan is None and sast_findings is None:
+            self.last_scope_reduction = None
+            return None
+
+        # Live endpoints are all seeded AST routes plus any crawled routes (`__runtime_crawl__`),
+        # excluding the synthetic `("GET", "/")` (`__runtime__`) added solely for passive header inspection.
+        live_routes = [r for r in all_routes if r.file != "__runtime__"]
+
+        if probe_plan is not None and sast_findings is None:
+            known_keys = {
+                (e.method.upper(), e.canonical_path)
+                for e in getattr(probe_plan, "route_entries", [])
+            }
+            has_new_drift = any(
+                (r.method.upper(), r.canonical_path) not in known_keys
+                for r in live_routes
+            )
+            if not has_new_drift:
+                self.last_scope_reduction = self._enrich_scope_report(probe_plan)
+                return self.last_scope_reduction
+
+        reducer = ScopeReducer(route_mapper=route_mapper)
+        effective_sast = list(sast_findings or [])
+        if hasattr(reducer, "build_dast_probe_plan"):
+            report = reducer.build_dast_probe_plan(
+                routes=seeded_routes,
+                sast_findings=effective_sast,
+                live_endpoints=live_routes,
+            )
+        else:
+            report = compute_scope_reduction(
+                routes=seeded_routes,
+                sast_findings=effective_sast,
+                live_endpoints=live_routes,
+                route_mapper=route_mapper,
+            )
+        self.last_scope_reduction = self._enrich_scope_report(report)
+        return self.last_scope_reduction
 
     async def scan(
-        self, routes: Optional[List[RouteEntry]] = None
+        self,
+        routes: Optional[List[RouteEntry]] = None,
+        sast_findings: Optional[List[CanonicalFinding]] = None,
+        probe_plan: Optional[ScopeReductionReport] = None,
+        route_mapper: Optional[Any] = None,
     ) -> List[CanonicalFinding]:
         """
         Execute the full 2-Phase DAST scan:
           - Crawl root & seed routes to collect baseline responses + HTML forms/links
+          - Compute/apply Adaptive Scope Reduction when `sast_findings` or `probe_plan` is supplied
           - Phase A: Active diagnostic verification for CWE-89, CWE-79, CWE-601, CWE-22, CWE-78
           - Phase B: Passive runtime security header, cookie, CORS, and banner audit (`Runtime only`)
           - Deduplicate findings by deterministic SHA-256 `fingerprint` (`FR-6`)
@@ -183,6 +253,15 @@ class DASTScanner:
                 client, seeded_routes, semaphore
             )
 
+            # Step 1b: Resolve Adaptive Scope Reduction Plan (if SAST findings or probe_plan provided)
+            active_plan = self._resolve_active_probe_plan(
+                seeded_routes=seeded_routes,
+                all_routes=all_routes,
+                sast_findings=sast_findings,
+                probe_plan=probe_plan,
+                route_mapper=route_mapper,
+            )
+
             # Step 2: Phase A — Active Diagnostic Probing across all routes & parameters
             active_tasks = [
                 self._probe_route_active(
@@ -190,6 +269,7 @@ class DASTScanner:
                     route,
                     baseline_responses.get((route.method, route.canonical_path)),
                     semaphore,
+                    active_plan=active_plan,
                 )
                 for route in all_routes
             ]
@@ -507,10 +587,53 @@ class DASTScanner:
         route: RouteEntry,
         baseline_resp: Optional[httpx.Response],
         semaphore: asyncio.Semaphore,
+        active_plan: Optional[ScopeReductionReport] = None,
     ) -> List[CanonicalFinding]:
-        """Run Phase A active diagnostic probes on a single `RouteEntry`."""
+        """
+        Run Phase A active diagnostic probes on a single `RouteEntry`.
+        When `active_plan` (`ScopeReductionReport`) is provided:
+          - `PRUNED_SAFE` routes skip Phase-A active fuzzing completely (0 active probes).
+          - `TARGETED_REDUCTION` (`EXACT_REPLICA` tainted) routes only execute the
+            specific `(param, CWE)` probe pairs flagged by SAST.
+          - `FULL_PROBE_DRIFT` (`RUNTIME_DRIFT_EXTRA`) routes execute all 5 CWE probes.
+        """
         findings: List[CanonicalFinding] = []
+        plan_entry = None
+        is_targeted_reduction = False
+
+        if active_plan is not None:
+            # Synthetic root `/` added purely for Phase B passive header audit is never actively fuzzed under a plan
+            if route.file == "__runtime__":
+                return findings
+
+            norm_method = route.method.upper()
+            norm_path = route.canonical_path
+            for entry in getattr(active_plan, "route_entries", []):
+                if entry.method.upper() == norm_method and entry.canonical_path == norm_path:
+                    plan_entry = entry
+                    break
+
+            if plan_entry is not None:
+                strategy = str(plan_entry.scope_strategy)
+                if strategy == "PRUNED_SAFE" or not getattr(plan_entry, "should_fuzz_active", True):
+                    return findings
+                if strategy == "TARGETED_REDUCTION":
+                    is_targeted_reduction = True
+
         candidate_params = self._infer_candidate_params(route)
+        if is_targeted_reduction and plan_entry is not None:
+            default_src = "query" if route.method == "GET" else "form"
+            seen_params = {p for p, _ in candidate_params}
+            for tp in getattr(plan_entry, "targeted_probes", []):
+                t_param = tp[0] if isinstance(tp, (tuple, list)) else getattr(tp, "param", None)
+                if t_param and t_param != "*" and t_param not in seen_params:
+                    candidate_params.append((t_param, route.param_sources.get(t_param, default_src)))
+                    seen_params.add(t_param)
+            for t_param in getattr(plan_entry, "tainted_params", []):
+                if t_param and t_param != "*" and t_param not in seen_params:
+                    candidate_params.append((t_param, route.param_sources.get(t_param, default_src)))
+                    seen_params.add(t_param)
+
         if not candidate_params:
             return findings
 
@@ -520,38 +643,70 @@ class DASTScanner:
         for param_name, param_source in candidate_params:
             p_lower = param_name.lower()
 
+            def _should_run_cwe(cwe_id: str, default_heuristic: bool = True) -> bool:
+                if active_plan is None:
+                    return default_heuristic
+                allowed = ScopeReducer.should_probe(
+                    active_plan,
+                    route.method,
+                    route.canonical_path,
+                    param_name,
+                    cwe_id,
+                )
+                if not allowed:
+                    return False
+                # If SAST explicitly targeted this (param, CWE), run even if param name is non-standard
+                if is_targeted_reduction:
+                    return True
+                return default_heuristic
+
             # 1. CWE-89: SQL Injection Diagnostic Probe
-            sqli_finding = await self._check_sqli_cwe89(
-                client, route, param_name, param_source, baseline_text, baseline_status, semaphore
-            )
-            if sqli_finding is not None:
-                findings.append(sqli_finding)
+            if _should_run_cwe("CWE-89", True):
+                sqli_finding = await self._check_sqli_cwe89(
+                    client, route, param_name, param_source, baseline_text, baseline_status, semaphore
+                )
+                if sqli_finding is not None:
+                    findings.append(sqli_finding)
 
             # 2. CWE-79: Cross-Site Scripting (XSS) Canary Reflection Probe
-            xss_finding = await self._check_xss_cwe79(
-                client, route, param_name, param_source, baseline_text, semaphore
-            )
-            if xss_finding is not None:
-                findings.append(xss_finding)
+            if _should_run_cwe("CWE-79", True):
+                xss_finding = await self._check_xss_cwe79(
+                    client, route, param_name, param_source, baseline_text, semaphore
+                )
+                if xss_finding is not None:
+                    findings.append(xss_finding)
 
-            # 3. CWE-601: Open Redirect Probe (when param or route suggests redirect)
-            if p_lower in REDIRECT_PARAM_HINTS or "redirect" in route.canonical_path.lower() or "login" in route.canonical_path.lower():
+            # 3. CWE-601: Open Redirect Probe (when param or route suggests redirect, or SAST targeted CWE-601)
+            redir_heuristic = (
+                p_lower in REDIRECT_PARAM_HINTS
+                or "redirect" in route.canonical_path.lower()
+                or "login" in route.canonical_path.lower()
+            )
+            if _should_run_cwe("CWE-601", redir_heuristic):
                 redir_finding = await self._check_open_redirect_cwe601(
                     client, route, param_name, param_source, semaphore
                 )
                 if redir_finding is not None:
                     findings.append(redir_finding)
 
-            # 4. CWE-22: Path Traversal Probe (when param or route suggests file/path)
-            if p_lower in FILE_PARAM_HINTS or any(k in route.canonical_path.lower() for k in ("file", "download", "export", "doc", "template")):
+            # 4. CWE-22: Path Traversal Probe (when param or route suggests file/path, or SAST targeted CWE-22)
+            pt_heuristic = (
+                p_lower in FILE_PARAM_HINTS
+                or any(k in route.canonical_path.lower() for k in ("file", "download", "export", "doc", "template"))
+            )
+            if _should_run_cwe("CWE-22", pt_heuristic):
                 pt_finding = await self._check_path_traversal_cwe22(
                     client, route, param_name, param_source, baseline_text, semaphore
                 )
                 if pt_finding is not None:
                     findings.append(pt_finding)
 
-            # 5. CWE-78: Command Injection Echo Canary Probe (when param or route suggests cmd/host)
-            if p_lower in CMD_PARAM_HINTS or any(k in route.canonical_path.lower() for k in ("ping", "diag", "cmd", "exec", "network", "tool")):
+            # 5. CWE-78: Command Injection Echo Canary Probe (when param or route suggests cmd/host, or SAST targeted CWE-78)
+            cmd_heuristic = (
+                p_lower in CMD_PARAM_HINTS
+                or any(k in route.canonical_path.lower() for k in ("ping", "diag", "cmd", "exec", "network", "tool"))
+            )
+            if _should_run_cwe("CWE-78", cmd_heuristic):
                 cmd_finding = await self._check_cmd_injection_cwe78(
                     client, route, param_name, param_source, baseline_text, semaphore
                 )
@@ -1111,6 +1266,13 @@ class DASTScanner:
 
         return passive_findings
 
+    # Method aliases matching Task B2.1 naming conventions
+    _probe_sqli = _check_sqli_cwe89
+    _probe_xss = _check_xss_cwe79
+    _probe_cmdi = _check_cmd_injection_cwe78
+    _probe_path_traversal = _check_path_traversal_cwe22
+    _probe_open_redirect = _check_open_redirect_cwe601
+
 
 # ---------------------------------------------------------------------------
 # Convenience Functional Entrypoints (Async & Sync)
@@ -1127,6 +1289,9 @@ async def run_dast_scan(
     transport: Optional[httpx.AsyncBaseTransport] = None,
     enable_crawl: bool = True,
     enable_passive_checks: bool = True,
+    sast_findings: Optional[List[CanonicalFinding]] = None,
+    probe_plan: Optional[ScopeReductionReport] = None,
+    route_mapper: Optional[Any] = None,
 ) -> List[CanonicalFinding]:
     """Async entrypoint for running the 2-Phase DAST scanner."""
     scanner = DASTScanner(
@@ -1139,7 +1304,12 @@ async def run_dast_scan(
         enable_crawl=enable_crawl,
         enable_passive_checks=enable_passive_checks,
     )
-    return await scanner.scan(routes=routes)
+    return await scanner.scan(
+        routes=routes,
+        sast_findings=sast_findings,
+        probe_plan=probe_plan,
+        route_mapper=route_mapper,
+    )
 
 
 def run_dast_scan_sync(

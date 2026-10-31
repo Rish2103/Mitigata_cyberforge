@@ -38,8 +38,9 @@ from core.schemas import (
     SCAFinding,
     ScanRequest,
     ScanSummary,
+    ScopeReductionReport,
 )
-from engine.dast_scanner import run_dast_scan
+from engine.dast_scanner import DASTScanner, run_dast_scan
 
 app = FastAPI(
     title="CYBERFORGE CORRELATE - SAST & DAST Correlation Engine",
@@ -726,18 +727,24 @@ async def create_and_run_scan(
             except ImportError:
                 pass
 
-    # 2. Person B 2-Phase Async DAST Scanner (FR-2)
+    # 2. Person B 2-Phase Async DAST Scanner (FR-2) with Adaptive Scope Reduction (Task B2.1)
+    wsgi_transport: Optional[httpx.AsyncBaseTransport] = None
+    scope_reduction_report: Optional[ScopeReductionReport] = None
     if validated_url and request.run_live_dast:
-        wsgi_transport: Optional[httpx.AsyncBaseTransport] = None
         if not _is_tcp_port_reachable(validated_url):
             wsgi_transport = _load_local_wsgi_transport(request.source_dir)
-        live_dast = await run_dast_scan(
+        dast_scanner_instance = DASTScanner(
             base_url=validated_url,
-            routes=routes,
             auth_headers=request.auth_headers,
             auth_cookies=request.auth_cookies,
             transport=wsgi_transport,
         )
+        live_dast = await dast_scanner_instance.scan(
+            routes=routes,
+            sast_findings=sast_findings,
+            route_mapper=mapper_instance,
+        )
+        scope_reduction_report = dast_scanner_instance.last_scope_reduction
         dast_findings.extend(live_dast)
 
     # 2b. Optional Checkpoint 1 Demo Slice Fallback when standalone target app is not running yet
@@ -748,6 +755,22 @@ async def create_and_run_scan(
         routes.extend(demo_routes)
         sast_findings.extend(demo_sast)
         dast_findings.extend(demo_dast)
+
+    # 2c. Ensure ScopeReductionReport telemetry is always computed for Task B2.3
+    if scope_reduction_report is None:
+        try:
+            from engine import scope_reducer  # type: ignore
+
+            if hasattr(scope_reducer, "compute_scope_reduction"):
+                scope_reduction_report = DatabaseStore._enrich_scope_reduction(
+                    scope_reducer.compute_scope_reduction(
+                        routes=routes,
+                        sast_findings=sast_findings,
+                        route_mapper=mapper_instance,
+                    )
+                )
+        except ImportError:
+            pass
 
     # 3. Correlate SAST + DAST Findings (FR-5, FR-6, FR-7, FR-9)
     correlated_issues: Optional[List[CorrelatedIssue]] = None
@@ -784,12 +807,15 @@ async def create_and_run_scan(
             from engine import auto_verify  # type: ignore
 
             if hasattr(auto_verify, "auto_verify_code_only_issues"):
+                if wsgi_transport is None and not _is_tcp_port_reachable(validated_url):
+                    wsgi_transport = _load_local_wsgi_transport(request.source_dir)
                 correlated_issues = await auto_verify.auto_verify_code_only_issues(
                     base_url=validated_url,
                     routes=routes,
                     issues=correlated_issues,
                     auth_headers=request.auth_headers,
                     auth_cookies=request.auth_cookies,
+                    transport=wsgi_transport,
                 )
         except ImportError:
             pass
@@ -815,6 +841,7 @@ async def create_and_run_scan(
         safe_decoys_suppressed=decoys_suppressed,
         issues=persisted_issues,
         sca_findings_count=len(sca_findings),
+        scope_reduction=scope_reduction_report,
     )
 
 
@@ -844,6 +871,18 @@ async def compare_two_scans(
         target = target or scans[0].scan_id
         base = base or scans[1].scan_id
     return store.compare_scans(base_scan_id=base, target_scan_id=target)
+
+
+@app.get("/scans/{scan_id}", response_model=ScanSummary)
+async def get_scan_detail(
+    scan_id: int,
+    store: DatabaseStore = Depends(get_store),
+) -> ScanSummary:
+    """Task B2.3: Return a single ScanSummary (including `scope_reduction` telemetry) by `scan_id`."""
+    scan = store.get_scan_by_id(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail=f"Scan #{scan_id} not found.")
+    return scan
 
 
 @app.get("/issues", response_model=List[CorrelatedIssue])
