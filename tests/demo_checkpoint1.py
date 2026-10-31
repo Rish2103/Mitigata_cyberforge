@@ -23,7 +23,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import sys
+from pathlib import Path
 from typing import List, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import assert_safe_target
 from core.schemas import CanonicalFinding, FindingSource, IssueStatus, RouteEntry, Severity
@@ -116,8 +122,8 @@ def _live_probe_target(base_url: str, routes: List[RouteEntry]) -> List[Canonica
 
         probes = [
             ("CWE-89", Severity.CRITICAL, "1' OR '1'='1", lambda body, hdrs, code: any(e in body.lower() for e in sql_errors)),
-            ("CWE-79", Severity.HIGH, "<script>alert('gordon_xss')</script>", lambda body, hdrs, code: "<script>alert('gordon_xss')</script>" in body),
-            ("CWE-78", Severity.CRITICAL, "127.0.0.1; echo gordon_cmd_78", lambda body, hdrs, code: "gordon_cmd_78" in body),
+            ("CWE-79", Severity.HIGH, "<script>alert('cyberforge_xss')</script>", lambda body, hdrs, code: "<script>alert('cyberforge_xss')</script>" in body),
+            ("CWE-78", Severity.CRITICAL, "127.0.0.1; echo cyberforge_cmd_78", lambda body, hdrs, code: "cyberforge_cmd_78" in body),
             ("CWE-22", Severity.HIGH, "../../../../etc/passwd", lambda body, hdrs, code: "root:x:0:0:" in body or "[extensions]" in body.lower()),
             ("CWE-601", Severity.MEDIUM, "https://evil.example.invalid", lambda body, hdrs, code: "evil.example.invalid" in hdrs.get("location", "")),
         ]
@@ -208,8 +214,8 @@ def _default_mock_dast_findings() -> List[CanonicalFinding]:
             url="http://localhost:5000/api/diagnostics/ping",
             method="POST",
             param="host",
-            payload="127.0.0.1; echo gordon_cmd_78",
-            evidence="Command output 'gordon_cmd_78' returned in HTTP body",
+            payload="127.0.0.1; echo cyberforge_cmd_78",
+            evidence="Command output 'cyberforge_cmd_78' returned in HTTP body",
         ),
         CanonicalFinding(
             id="dast_pt_download",
@@ -259,8 +265,10 @@ def _default_mock_dast_findings() -> List[CanonicalFinding]:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
-        description="Gordon Correlate — Checkpoint 1 Live Judge Demo & Custom Code/URL Scanner"
+        description="CyberForge Correlate - Checkpoint 1 Live Judge Demo & Custom Code/URL Scanner"
     )
     parser.add_argument(
         "--source",
@@ -294,7 +302,7 @@ def main() -> None:
 
     t0 = time.perf_counter()
     print("=" * 88)
-    print(" GORDON CORRELATE — CHECKPOINT 1 LIVE ENGINE DEMO (PROBLEM 06 · FLAGSHIP)")
+    print(" CYBERFORGE CORRELATE — CHECKPOINT 1 LIVE ENGINE DEMO (PROBLEM 06 · FLAGSHIP)")
     print(f" Target Codebase : {target_dir}")
     print(f" Target Live URL : {args.url or 'Simulated DAST (pass --url http://localhost:PORT for live HTTP probing)'}")
     print("=" * 88)

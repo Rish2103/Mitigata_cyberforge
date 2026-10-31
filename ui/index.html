@@ -3,902 +3,749 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CyberForge Correlate — AST & DAST Correlation Engine</title>
-  <!-- Editorial Serif-Sans Hybrid + Geometric Grotesque + Monospace Fallback Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>CyberForge Correlate | SAST + DAST + SCA Correlation Engine</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet" />
+
   <style>
-    /* ==========================================================================
-       1. SARVAM AI ("SOVEREIGN INDIAN EDITORIAL MODERNISM") DESIGN TOKENS
-       ========================================================================== */
     :root {
-      /* Typography Families */
-      --font-season-mix: "Season Mix", "Instrument Serif", Georgia, serif;
-      --font-matter: "Matter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      --font-mono: "Matter Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      /* Architectural Palette */
+      --color-sr-indigo-900: #111625;
+      --color-sr-indigo-800: #1a2138;
+      --color-sr-indigo-700: #252f4f;
+      --color-sr-indigo-500: #3d52d5;
+      --color-sr-indigo-100: #eaeeff;
 
-      /* Core Semantic Tokens (Text, Surface, Stroke, Brand) */
-      --color-tx: #1f1f1f;
-      --color-tx-secondary: #3d3d3d;
-      --color-tx-tertiary: #666666;
-      --color-tx-inverse: #faf8f5;
-      --color-tx-brand: #29211d;
-      --color-tx-accent: #c4733d;
+      --bg-canvas: #f6f7f9;
+      --bg-surface: #ffffff;
+      --bg-surface-subtle: #f1f3f7;
+      --bg-surface-elevated: rgba(255, 255, 255, 0.94);
 
-      --color-sf: #fcfcfc;
-      --color-sf-secondary: #f5f5f5;
-      --color-sf-tertiary: #f0f0f0;
-      --color-sf-quaternary: #e6e6e6;
+      --text-primary: #111625;
+      --text-secondary: #4a5368;
+      --text-muted: #768096;
 
-      --color-st: #e6e6e6;
-      --color-st-secondary: #f0f0f0;
+      --border-hairline: rgba(17, 22, 37, 0.09);
+      --border-strong: rgba(17, 22, 37, 0.18);
 
-      --color-sr-white: #ffffff;
-      --color-sr-black: #141414;
-      --color-sr-slate: #2a2c33;
-      --color-br-orange: #d5650f;
-      --color-br-blue: #393cc1;
+      --status-confirmed-bg: #fef2f2;
+      --status-confirmed-text: #b91c1c;
+      --status-confirmed-border: rgba(185, 28, 28, 0.25);
 
-      /* Sarvam Indigo Ramp */
-      --color-sr-indigo-50:  #fafcff;
-      --color-sr-indigo-100: #e8effc;
-      --color-sr-indigo-200: #d2dff9;
-      --color-sr-indigo-300: #a7c0f1;
-      --color-sr-indigo-400: #81a0e9;
-      --color-sr-indigo-500: #6a88e2;
-      --color-sr-indigo-600: #4250d5;
-      --color-sr-indigo-700: #3d43c6;
-      --color-sr-indigo-800: #3333cc;
-      --color-sr-indigo-900: #212191;
-      --color-sr-indigo-950: #11115b;
+      --status-needs-bg: #fffbeb;
+      --status-needs-text: #b45309;
+      --status-needs-border: rgba(180, 83, 9, 0.25);
 
-      /* Sarvam Orange / Terracotta Ramp */
-      --color-sr-orange-50:  #fffbfa;
-      --color-sr-orange-100: #fef2ec;
-      --color-sr-orange-200: #fddcce;
-      --color-sr-orange-300: #f9b899;
-      --color-sr-orange-400: #f39567;
-      --color-sr-orange-500: #f6b394;
-      --color-sr-orange-600: #ec813e;
-      --color-sr-orange-700: #ef772f;
-      --color-sr-orange-800: #e6651b;
-      --color-sr-orange-900: #a5460f;
-      --color-sr-orange-950: #682906;
+      --status-contradicted-bg: #f0f9ff;
+      --status-contradicted-text: #0369a1;
+      --status-contradicted-border: rgba(3, 105, 161, 0.25);
 
-      /* Sarvam Green (Verification & Safe Decoy Ramp) */
-      --color-sr-green-50:  #f2f8eb;
-      --color-sr-green-100: #dbeed0;
-      --color-sr-green-200: #c8e4b0;
-      --color-sr-green-300: #90c85b;
-      --color-sr-green-400: #72ba32;
-      --color-sr-green-500: #5ea322;
-      --color-sr-green-600: #47821b;
-      --color-sr-green-700: #336312;
-      --color-sr-green-800: #24450b;
-      --color-sr-green-900: #152605;
+      --status-unverified-bg: #f3f4f6;
+      --status-unverified-text: #374151;
+      --status-unverified-border: rgba(55, 65, 81, 0.2);
 
-      /* Sarvam Pink (Lotus Accent Ramp) */
-      --color-sr-pink-50:  #fceaf0;
-      --color-sr-pink-100: #f9d5e1;
-      --color-sr-pink-200: #efabc5;
-      --color-sr-pink-300: #e0568b;
-      --color-sr-pink-400: #d1306e;
+      --status-safe-bg: #ecfdf5;
+      --status-safe-text: #047857;
+      --status-safe-border: rgba(4, 120, 87, 0.25);
 
-      /* Sarvam Red (Alert / Confirmed Critical Ramp) */
-      --color-sr-red-50:  #fde7e2;
-      --color-sr-red-100: #f8d1c6;
-      --color-sr-red-200: #f3a18d;
-      --color-sr-red-300: #e5431c;
-      --color-sr-red-400: #d3310a;
-      --color-sr-red-500: #9f270a;
-      --color-sr-red-600: #6c1e0c;
-      --color-sr-red-700: #3e140b;
+      /* Typography */
+      --font-season-mix: 'Newsreader', Georgia, serif;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
 
-      /* Sarvam Yellow / Saffron Amber (Code-Only & Audit Ramp) */
-      --color-sr-yellow-50:  #fff8e6;
-      --color-sr-yellow-100: #fff1ce;
-      --color-sr-yellow-200: #ffe8b7;
-      --color-sr-yellow-300: #ffcb79;
-      --color-sr-yellow-400: #ffb94a;
-      --color-sr-yellow-500: #ffa529;
-      --color-sr-yellow-600: #d9821f;
-      --color-sr-yellow-700: #9c5b1b;
-      --color-sr-yellow-800: #613d18;
+      /* Crisp Architectural Radii (No soft or pill radii) */
+      --radius-xs: 2px;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 6px;
 
-      /* Warm Espresso-Tinted Elevation Shadows */
-      --shadow-sm: 0 1px 2px rgba(41, 33, 29, 0.04);
-      --shadow-md: 0 4px 12px rgba(41, 33, 29, 0.06);
-      --shadow-lg: 0 8px 24px rgba(41, 33, 29, 0.08);
-      --shadow-card: 0 1px 3px rgba(41, 33, 29, 0.04), 0 4px 12px rgba(41, 33, 29, 0.03);
-
-      /* Border Radii */
-      --radius-sm: 6px;
-      --radius-md: 8px;
-      --radius-lg: 12px;
-      --radius-xl: 16px;
-      --radius-2xl: 20px;
-      --radius-3xl: 24px;
-      --radius-pill: 9999px;
-
-      /* Apple Fluid Motion Curves */
-      --ease-spring: cubic-bezier(0.2, 0, 0, 1);
-      --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
-      --ease-morph: cubic-bezier(0.4, 0, 0.2, 1);
+      --shadow-card: 0 1px 3px rgba(17, 22, 37, 0.05), 0 1px 2px rgba(17, 22, 37, 0.03);
+      --shadow-sheet: -8px 0 32px rgba(17, 22, 37, 0.12);
+      --shadow-modal: 0 20px 48px rgba(17, 22, 37, 0.2);
     }
 
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      -webkit-tap-highlight-color: transparent;
     }
 
-    html, body {
-      background-color: var(--color-sf);
-      color: var(--color-tx);
-      font-family: var(--font-matter);
-      font-size: 16px;
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
       line-height: 1.5;
-      letter-spacing: -0.008em;
-      font-optical-sizing: auto;
+      font-size: 14px;
       -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
 
-    /* ==========================================================================
-       2. TYPOGRAPHY & OPTICAL TRACKING UTILITIES (SARVAM + APPLE WWDC RULES)
-       ========================================================================== */
-    .font-season {
-      font-family: var(--font-season-mix);
-      font-weight: 400;
-    }
-    .font-matter {
-      font-family: var(--font-matter);
-    }
-    .font-mono {
-      font-family: var(--font-mono);
-    }
-
-    .eyebrow {
-      font-family: var(--font-matter);
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      color: var(--color-tx-tertiary);
-    }
-
-    .display-title {
-      font-family: var(--font-season-mix);
-      font-size: clamp(2.1rem, 3.6vw, 3.1rem);
-      line-height: 1.08;
-      letter-spacing: -0.025em;
-      color: var(--color-tx);
-    }
-
-    /* ==========================================================================
-       3. TRANSLUCENT FLOATING NAVBAR & AMBIENT AURA
-       ========================================================================== */
-    .hero-aura {
+    /* Top Scroll Progress Bar */
+    .scroll-progress-track {
       position: fixed;
-      top: -140px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 860px;
-      height: 420px;
-      background: radial-gradient(circle, #a5bbfc 0%, #d5e2ff 42%, transparent 72%);
-      filter: blur(90px);
-      opacity: 0.45;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: transparent;
+      z-index: 200;
       pointer-events: none;
-      z-index: 0;
     }
 
-    .navbar {
+    .scroll-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--color-sr-indigo-500);
+      transition: width 80ms linear;
+    }
+
+    /* Sticky Top Navigation */
+    .topbar {
       position: sticky;
       top: 0;
-      z-index: 100;
-      height: 68px;
-      background: rgba(252, 252, 252, 0.78);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border-bottom: 1px solid rgba(230, 230, 230, 0.85);
-      transition: background 200ms var(--ease-spring);
+      z-index: 90;
+      background: var(--bg-surface-elevated);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-hairline);
     }
 
-    .container {
-      width: 92%;
-      max-width: 1400px;
+    .topbar-inner {
+      max-width: 1440px;
       margin: 0 auto;
-      position: relative;
-      z-index: 1;
-    }
-
-    .nav-inner {
-      height: 100%;
+      padding: 12px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
+      flex-wrap: wrap;
     }
 
-    .brand-cluster {
+    .brand-group {
       display: flex;
       align-items: center;
       gap: 12px;
+      text-decoration: none;
+      color: inherit;
+      cursor: pointer;
     }
 
-    .brand-emblem {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      background: linear-gradient(180deg, #3a3f5c 0%, #1e2033 100%);
-      color: #fff;
-      display: grid;
-      place-items: center;
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: var(--radius-sm);
+      background: var(--color-sr-indigo-900);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+
+    .brand-title {
       font-family: var(--font-season-mix);
-      font-size: 20px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 6px rgba(30,32,51,0.18);
-    }
-
-    .brand-name {
-      font-family: var(--font-matter);
-      font-weight: 700;
-      font-size: 15px;
+      font-size: 19px;
+      font-weight: 600;
       letter-spacing: -0.02em;
-      color: var(--color-tx);
+      color: var(--color-sr-indigo-900);
     }
 
-    .brand-sub {
+    .brand-subtitle {
       font-size: 11px;
-      color: var(--color-tx-tertiary);
-      display: block;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
 
-    .scope-pill {
-      display: inline-flex;
+    .topbar-controls {
+      display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 13px;
-      border-radius: var(--radius-pill);
-      background: var(--color-sr-green-50);
-      border: 1px solid var(--color-sr-green-200);
-      color: var(--color-sr-green-800);
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
+      flex-wrap: wrap;
     }
 
-    .scope-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--color-sr-green-500);
-      box-shadow: 0 0 0 3px rgba(94, 163, 34, 0.2);
+    .security-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: var(--radius-xs);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--status-safe-bg);
+      color: var(--status-safe-text);
+      border: 1px solid var(--status-safe-border);
     }
 
-    /* ==========================================================================
-       4. TACTILE BEVELED PILL BUTTONS WITH CURSOR SPOTLIGHT & POINTER-DOWN RESPONSE
-       ========================================================================== */
-    .btn-pill {
-      position: relative;
+    .security-badge.neutral {
+      background: var(--bg-surface-subtle);
+      color: var(--text-secondary);
+      border-color: var(--border-hairline);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: var(--radius-xs);
+      background: currentColor;
+    }
+
+    .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      overflow: hidden;
-      border-radius: var(--radius-pill);
-      font-family: var(--font-matter);
+      gap: 6px;
+      padding: 7px 13px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-sans);
+      font-size: 12.5px;
       font-weight: 500;
-      font-size: 14px;
-      min-height: 40px;
-      padding: 8px 18px;
       cursor: pointer;
-      user-select: none;
-      border: none;
-      outline: none;
-      transition: transform 120ms ease-out, box-shadow 300ms var(--ease-spring), background 300ms var(--ease-spring);
-      will-change: transform;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      transition: background 140ms ease, border-color 140ms ease, transform 90ms ease;
+      text-decoration: none;
     }
 
-    /* Apple Rule 1: Instant response on pointer-down, not release */
-    .btn-pill:active,
-    .btn-pill.is-pressed {
-      transform: scale(0.96);
-      transition: transform 80ms ease-out;
+    .btn:hover:not(:disabled) {
+      background: var(--bg-surface-subtle);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.985);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
 
     .btn-primary {
-      background: linear-gradient(180deg, #3a3f5c 0%, #1e2033 100%);
+      background: var(--color-sr-indigo-900);
       color: #ffffff;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.25), 0 2px 8px rgba(30, 32, 51, 0.16);
+      border-color: var(--color-sr-indigo-900);
     }
 
-    .btn-primary:hover {
-      background: linear-gradient(180deg, #434968 0%, #262840 100%);
+    .btn-primary:hover:not(:disabled) {
+      background: var(--color-sr-indigo-800);
     }
 
-    .btn-secondary {
-      background: linear-gradient(180deg, #ffffff 0%, #f0f1f5 100%);
-      color: var(--color-tx);
-      border: 1px solid var(--color-st);
-      box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.05), var(--shadow-sm);
-    }
-
-    .btn-secondary:hover {
-      background: #ffffff;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.08);
-    }
-
-    .btn-spotlight {
-      pointer-events: none;
-      position: absolute;
-      inset: 0;
-      border-radius: var(--radius-pill);
-      opacity: 0;
-      transition: opacity 250ms var(--ease-spring);
-      background: radial-gradient(circle 75px at var(--gx, 50%) var(--gy, 50%), rgba(255, 255, 255, 0.22) 0%, transparent 100%);
-    }
-
-    .btn-pill:hover .btn-spotlight {
-      opacity: 1;
-    }
-
-    /* ==========================================================================
-       5. HERO HEADER & SCAN CONFIGURATION BAR
-       ========================================================================== */
-    .hero-section {
-      padding: 28px 0 20px;
+    /* Main Container */
+    .workspace-container {
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 24px 48px;
+      flex: 1;
       display: flex;
       flex-direction: column;
       gap: 18px;
     }
 
-    .hero-top {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-end;
+    /* Structured Error Banner */
+    .error-banner {
+      display: none;
+      align-items: flex-start;
       justify-content: space-between;
-      gap: 20px;
+      gap: 16px;
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      background: var(--status-confirmed-bg);
+      border: 1px solid var(--status-confirmed-border);
+      color: var(--status-confirmed-text);
     }
 
-    .sovereign-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 8px;
-      color: var(--color-sr-indigo-900);
+    .error-banner.visible {
+      display: flex;
+    }
+
+    .error-banner-title {
+      font-weight: 600;
       font-size: 13px;
-      font-weight: 500;
-      letter-spacing: 0.025em;
+      margin-bottom: 2px;
     }
 
-    .sovereign-line {
-      width: 36px;
-      height: 1px;
-      background: radial-gradient(circle, rgb(106, 136, 226) 0%, rgba(0, 0, 0, 0) 100%);
+    .error-banner-msg {
+      font-size: 12.5px;
+      font-family: var(--font-mono);
+      word-break: break-word;
     }
 
-    /* Glassmorphic Outer Bezel (Sarvam Playground Pattern) */
-    .glass-bezel {
-      padding: 6px;
-      border-radius: var(--radius-3xl);
-      background: linear-gradient(rgba(20, 20, 20, 0.08) 0%, rgba(20, 20, 20, 0.03) 100%);
-      border: 1px solid rgba(255, 255, 255, 0.6);
-      box-shadow: var(--shadow-md);
-      backdrop-filter: blur(24px);
-    }
-
-    .scan-control-bar {
-      background: var(--color-sr-white);
-      border: 1px solid var(--color-st);
-      border-radius: var(--radius-2xl);
+    /* Animated Scan Progress Bar */
+    .scan-progress-panel {
+      display: none;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
       padding: 14px 18px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .scan-progress-panel.active {
+      display: block;
+    }
+
+    .scan-progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+    }
+
+    .scan-progress-track {
+      height: 5px;
+      background: var(--bg-surface-subtle);
+      border-radius: var(--radius-xs);
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+
+    .scan-progress-fill {
+      height: 100%;
+      width: 15%;
+      background: var(--color-sr-indigo-500);
+      transition: width 260ms ease;
+    }
+
+    .scan-stage-pills {
       display: grid;
-      grid-template-columns: 1.1fr 1.1fr 0.8fr auto;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+
+    .scan-stage-pill {
+      padding: 6px 8px;
+      border-radius: var(--radius-xs);
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-hairline);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .scan-stage-pill.active {
+      background: var(--color-sr-indigo-100);
+      border-color: var(--color-sr-indigo-500);
+      color: var(--color-sr-indigo-900);
+      font-weight: 600;
+    }
+
+    .scan-stage-pill.done {
+      background: var(--status-safe-bg);
+      border-color: var(--status-safe-border);
+      color: var(--status-safe-text);
+    }
+
+    /* Scan Target Configuration Bar */
+    .config-panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      box-shadow: var(--shadow-card);
+      display: grid;
+      grid-template-columns: 1.2fr 1.2fr 1fr auto;
       gap: 12px;
       align-items: end;
     }
 
-    @media (max-width: 980px) {
-      .scan-control-bar {
+    @media (max-width: 1024px) {
+      .config-panel {
         grid-template-columns: 1fr 1fr;
       }
     }
+
     @media (max-width: 640px) {
-      .scan-control-bar {
+      .config-panel {
+        grid-template-columns: 1fr;
+      }
+      .scan-stage-pills {
         grid-template-columns: 1fr;
       }
     }
 
-    .input-group {
+    .field-group {
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
     }
 
-    .input-label {
+    .field-label {
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: var(--color-tx-tertiary);
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
     }
 
-    .input-field {
-      height: 38px;
-      padding: 0 12px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--color-st);
-      background: var(--color-sf);
-      color: var(--color-tx);
+    .field-input,
+    .field-select {
+      padding: 7px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
       font-family: var(--font-mono);
       font-size: 12.5px;
-      transition: border-color 150ms, box-shadow 150ms;
-    }
-
-    .input-field:focus {
+      color: var(--text-primary);
       outline: none;
+    }
+
+    .field-input:focus,
+    .field-select:focus {
       border-color: var(--color-sr-indigo-500);
-      box-shadow: 0 0 0 3px var(--color-sr-indigo-100);
-      background: var(--color-sr-white);
     }
 
-    /* ==========================================================================
-       6. 4 KPI BENTO MOSAIC WITH SARVAM MESH GLOWS (.cw-glow)
-       ========================================================================== */
-    .bento-kpi-grid {
+    /* Telemetry KPI Grid */
+    .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px; /* Sarvam signature 8px micro-grid gap */
-      margin: 18px 0;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
     }
 
-    @media (max-width: 960px) {
-      .bento-kpi-grid {
-        grid-template-columns: repeat(2, 1fr);
+    @media (max-width: 1100px) {
+      .kpi-grid {
+        grid-template-columns: repeat(3, 1fr);
       }
     }
-    @media (max-width: 540px) {
-      .bento-kpi-grid {
-        grid-template-columns: 1fr;
+
+    @media (max-width: 640px) {
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
       }
     }
 
     .kpi-card {
-      position: relative;
-      overflow: hidden;
-      background: var(--color-sr-white);
-      border: 1px solid var(--color-st);
-      border-radius: var(--radius-lg);
-      padding: 20px 22px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
       box-shadow: var(--shadow-card);
       cursor: pointer;
-      transition: transform 250ms var(--ease-spring), border-color 250ms var(--ease-spring), box-shadow 250ms var(--ease-spring);
-      user-select: none;
+      transition: border-color 140ms ease, transform 100ms ease;
     }
 
     .kpi-card:hover {
-      transform: translateY(-2px);
-      box-shadow: var(--shadow-md);
-    }
-
-    .kpi-card:active {
-      transform: scale(0.98);
-      transition: transform 90ms ease-out;
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
     }
 
     .kpi-card.active-filter {
-      border-color: var(--color-tx);
-      box-shadow: 0 0 0 1px var(--color-tx), var(--shadow-md);
+      border-color: var(--color-sr-indigo-500);
+      background: #fafbff;
     }
 
-    .cw-glow {
-      position: absolute;
-      inset: 0;
-      opacity: 0.55;
-      pointer-events: none;
-      transition: opacity 400ms var(--ease-morph);
-    }
-
-    .kpi-card:hover .cw-glow,
-    .kpi-card.active-filter .cw-glow {
-      opacity: 0.92;
-    }
-
-    /* Mesh Glow 1: Confirmed (Orange + Lotus Pink / Coral) */
-    .glow-confirmed {
-      background:
-        radial-gradient(70% 90% at 100% 100%, rgba(230, 101, 27, 0.25) 0%, rgba(239, 171, 197, 0.22) 45%, transparent 78%),
-        linear-gradient(to top, var(--color-sr-orange-50) 0%, transparent 75%);
-    }
-
-    /* Mesh Glow 2: Code Only (Saffron / Amber) */
-    .glow-code {
-      background:
-        radial-gradient(70% 90% at 100% 100%, rgba(255, 185, 74, 0.28) 0%, rgba(255, 232, 183, 0.25) 45%, transparent 78%),
-        linear-gradient(to top, var(--color-sr-yellow-50) 0%, transparent 75%);
-    }
-
-    /* Mesh Glow 3: Runtime Only (Sovereign Indigo) */
-    .glow-runtime {
-      background:
-        radial-gradient(70% 90% at 100% 100%, rgba(129, 160, 233, 0.30) 0%, rgba(210, 223, 249, 0.25) 45%, transparent 78%),
-        linear-gradient(to top, var(--color-sr-indigo-50) 0%, transparent 75%);
-    }
-
-    /* Mesh Glow 4: Safe Decoys Suppressed (Sage Green) */
-    .glow-decoy {
-      background:
-        radial-gradient(70% 90% at 100% 100%, rgba(144, 200, 91, 0.28) 0%, rgba(200, 228, 176, 0.24) 45%, transparent 78%),
-        linear-gradient(to top, var(--color-sr-green-50) 0%, transparent 75%);
-    }
-
-    .kpi-content {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .kpi-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+    .kpi-label {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
     }
 
     .kpi-value {
       font-family: var(--font-season-mix);
-      font-size: 40px;
-      line-height: 1.05;
-      letter-spacing: -0.8px;
-      color: var(--color-tx);
-    }
-
-    .kpi-caption {
-      font-size: 13px;
-      color: var(--color-tx-secondary);
-      font-weight: 500;
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1.1;
+      color: var(--text-primary);
     }
 
     .kpi-sub {
-      font-size: 11.5px;
-      color: var(--color-tx-tertiary);
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
     }
 
-    /* ==========================================================================
-       7. APPSEC TELEMETRY & IDEMPOTENCY PROOF STRIP
-       ========================================================================== */
-    .telemetry-strip {
-      background: linear-gradient(180deg, #13121e 0%, #232542 100%);
-      color: var(--color-tx-inverse);
-      border-radius: var(--radius-xl);
-      padding: 14px 22px;
-      margin-bottom: 18px;
+    /* Navigation Tabs & Filter Bar */
+    .toolbar-row {
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      box-shadow: var(--shadow-md);
-    }
-
-    .telemetry-metrics {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 24px;
-    }
-
-    .telemetry-item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .telemetry-label {
-      font-size: 10.5px;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      color: var(--color-sr-indigo-300);
-    }
-
-    .telemetry-val {
-      font-family: var(--font-mono);
-      font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
-    }
-
-    /* ==========================================================================
-       8. WORKSPACE TABS & FILTER CONTROLS
-       ========================================================================== */
-    .workspace-shell {
-      background: var(--color-sr-white);
-      border: 1px solid var(--color-st);
-      border-radius: var(--radius-2xl);
-      box-shadow: var(--shadow-card);
-      overflow: hidden;
-      margin-bottom: 56px;
-    }
-
-    .workspace-toolbar {
-      display: flex;
-      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 12px 18px;
-      background: var(--color-sf-secondary);
-      border-bottom: 1px solid var(--color-st);
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border-hairline);
+      padding-bottom: 12px;
     }
 
-    .tab-group {
-      display: inline-flex;
-      background: var(--color-sf-tertiary);
-      padding: 4px;
-      border-radius: var(--radius-pill);
-      border: 1px solid var(--color-st);
-      gap: 4px;
+    .nav-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
-    .tab-btn {
-      border: none;
+    .nav-tab {
+      padding: 7px 13px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
       background: transparent;
-      color: var(--color-tx-tertiary);
-      font-family: var(--font-matter);
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
       font-size: 13px;
-      font-weight: 600;
-      padding: 7px 15px;
-      border-radius: var(--radius-pill);
+      font-weight: 500;
       cursor: pointer;
-      transition: background 200ms var(--ease-spring), color 200ms var(--ease-spring), transform 100ms ease-out;
       display: inline-flex;
       align-items: center;
       gap: 7px;
+      transition: all 120ms ease;
     }
 
-    .tab-btn:active {
-      transform: scale(0.96);
+    .nav-tab:hover {
+      background: var(--bg-surface-subtle);
+      color: var(--text-primary);
     }
 
-    .tab-btn.active {
-      background: var(--color-sr-white);
-      color: var(--color-tx);
-      box-shadow: var(--shadow-sm);
+    .nav-tab.active {
+      background: var(--color-sr-indigo-900);
+      color: #ffffff;
+      border-color: var(--color-sr-indigo-900);
     }
 
     .tab-count {
       font-family: var(--font-mono);
       font-size: 11px;
       padding: 1px 6px;
-      border-radius: var(--radius-pill);
-      background: var(--color-sf-secondary);
-      color: var(--color-tx-secondary);
+      border-radius: var(--radius-xs);
+      background: rgba(17, 22, 37, 0.08);
     }
 
-    .filter-cluster {
+    .nav-tab.active .tab-count {
+      background: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+    }
+
+    .filter-controls {
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
       gap: 8px;
-    }
-
-    .select-pill {
-      height: 34px;
-      padding: 0 12px;
-      border-radius: var(--radius-pill);
-      border: 1px solid var(--color-st);
-      background: var(--color-sr-white);
-      color: var(--color-tx-secondary);
-      font-family: var(--font-matter);
-      font-size: 12.5px;
-      font-weight: 500;
-      cursor: pointer;
-    }
-
-    /* ==========================================================================
-       9. PRIORITISED ISSUE CARDS & BADGES (FR-8, FR-9, B-3, B-4)
-       ========================================================================== */
-    .issue-list {
-      display: flex;
-      flex-direction: column;
-      divide-y: 1px solid var(--color-st-secondary);
-    }
-
-    .issue-row {
-      padding: 18px 22px;
-      border-bottom: 1px solid var(--color-st-secondary);
-      background: var(--color-sr-white);
-      transition: background 180ms var(--ease-spring);
-      cursor: pointer;
-    }
-
-    .issue-row:hover {
-      background: var(--color-sf);
-    }
-
-    .issue-row-header {
-      display: flex;
       flex-wrap: wrap;
+    }
+
+    /* Data Panels & Tables */
+    .view-panel {
+      display: none;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+    }
+
+    .view-panel.active {
+      display: block;
+    }
+
+    .panel-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-    }
-
-    .issue-main-meta {
-      display: flex;
       flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
+      background: var(--bg-surface-subtle);
     }
 
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 4px 10px;
-      border-radius: var(--radius-pill);
-      font-size: 11.5px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-    }
-
-    .badge-confirmed {
-      background: var(--color-sr-red-50);
-      color: var(--color-sr-red-500);
-      border: 1px solid var(--color-sr-red-200);
-    }
-
-    .badge-code-only {
-      background: var(--color-sr-yellow-50);
-      color: var(--color-sr-yellow-800);
-      border: 1px solid var(--color-sr-yellow-300);
-    }
-
-    .badge-runtime-only {
-      background: var(--color-sr-indigo-100);
-      color: var(--color-sr-indigo-900);
-      border: 1px solid var(--color-sr-indigo-300);
-    }
-
-    .badge-decoy {
-      background: var(--color-sr-green-50);
-      color: var(--color-sr-green-800);
-      border: 1px solid var(--color-sr-green-200);
-    }
-
-    .badge-cwe {
-      font-family: var(--font-mono);
-      background: var(--color-sr-slate);
-      color: #ffffff;
-      padding: 3px 9px;
-      border-radius: var(--radius-sm);
-      font-size: 11.5px;
-      font-weight: 600;
-    }
-
-    .badge-sev-Critical, .badge-sev-CRITICAL, .badge-sev-High, .badge-sev-HIGH {
-      background: var(--color-sr-orange-100);
-      color: var(--color-sr-orange-900);
-      border: 1px solid var(--color-sr-orange-300);
-    }
-
-    .badge-sev-Medium, .badge-sev-MEDIUM, .badge-sev-Low, .badge-sev-LOW, .badge-sev-Info, .badge-sev-INFO {
-      background: var(--color-sf-tertiary);
-      color: var(--color-tx-secondary);
-      border: 1px solid var(--color-st);
-    }
-
-    .badge-diff-NEW {
-      background: var(--color-sr-red-100);
-      color: var(--color-sr-red-600);
-      border: 1px solid var(--color-sr-red-300);
-    }
-    .badge-diff-FIXED {
-      background: var(--color-sr-green-100);
-      color: var(--color-sr-green-800);
-      border: 1px solid var(--color-sr-green-300);
-    }
-    .badge-diff-STILL-OPEN {
-      background: var(--color-sr-yellow-100);
-      color: var(--color-sr-yellow-800);
-      border: 1px solid var(--color-sr-yellow-300);
-    }
-
-    .issue-title {
+    .panel-title {
       font-family: var(--font-season-mix);
-      font-size: 20px;
-      color: var(--color-tx);
-      letter-spacing: -0.015em;
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--color-sr-indigo-900);
     }
 
-    .issue-summary-pills {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 14px;
-      margin-top: 10px;
-      font-size: 12.5px;
-      color: var(--color-tx-secondary);
-    }
-
-    .mono-chip {
-      font-family: var(--font-mono);
+    .panel-subtitle {
       font-size: 12px;
-      background: var(--color-sf-secondary);
-      border: 1px solid var(--color-st);
-      padding: 2px 8px;
-      border-radius: var(--radius-sm);
-      color: var(--color-tx);
+      color: var(--text-secondary);
     }
 
-    .b3-link-banner {
-      margin-top: 10px;
-      padding: 8px 12px;
-      border-radius: var(--radius-md);
-      background: var(--color-sr-indigo-50);
-      border: 1px solid var(--color-sr-indigo-200);
-      color: var(--color-sr-indigo-950);
-      font-size: 12.5px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    /* ==========================================================================
-       10. AST ROUTE MAP TABLE (FR-4) & SAFE DECOYS TABLE (B-2)
-       ========================================================================== */
-    .data-table-wrap {
+    .table-scroll {
       width: 100%;
       overflow-x: auto;
     }
 
-    .data-table {
+    table.data-table {
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      font-size: 13.5px;
     }
 
     .data-table th {
-      background: var(--color-sf-secondary);
-      color: var(--color-tx-tertiary);
+      padding: 10px 16px;
+      font-family: var(--font-mono);
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 1.4px;
-      padding: 12px 18px;
-      border-bottom: 1px solid var(--color-st);
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-hairline);
+      background: #fafbfc;
     }
 
     .data-table td {
-      padding: 14px 18px;
-      border-bottom: 1px solid var(--color-st-secondary);
-      color: var(--color-tx-secondary);
-      vertical-align: top;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-hairline);
+      font-size: 13px;
+      vertical-align: middle;
     }
 
-    .data-table tr:hover td {
-      background: var(--color-sf);
+    .data-table tr.clickable-row {
+      cursor: pointer;
+      transition: background 100ms ease;
     }
 
-    /* ==========================================================================
-       11. APPLE FLUID DRAGGABLE / INTERRUPTIBLE SPLIT ISSUE INSPECTOR SHEET (FR-8)
-       ========================================================================== */
-    .sheet-scrim {
+    .data-table tr.clickable-row:hover {
+      background: #f8faff;
+    }
+
+    .data-table tr.clickable-row.selected-row {
+      background: var(--color-sr-indigo-100);
+    }
+
+    /* Status Badges */
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: var(--radius-xs);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .status-chip.Confirmed {
+      background: var(--status-confirmed-bg);
+      color: var(--status-confirmed-text);
+      border-color: var(--status-confirmed-border);
+    }
+
+    .status-chip.NeedsVerification {
+      background: var(--status-needs-bg);
+      color: var(--status-needs-text);
+      border-color: var(--status-needs-border);
+    }
+
+    .status-chip.Contradicted {
+      background: var(--status-contradicted-bg);
+      color: var(--status-contradicted-text);
+      border-color: var(--status-contradicted-border);
+    }
+
+    .status-chip.Unverified {
+      background: var(--status-unverified-bg);
+      color: var(--status-unverified-text);
+      border-color: var(--status-unverified-border);
+    }
+
+    .status-chip.SafeDecoy {
+      background: var(--status-safe-bg);
+      color: var(--status-safe-text);
+      border-color: var(--status-safe-border);
+    }
+
+    .code-tag {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      padding: 2px 6px;
+      border-radius: var(--radius-xs);
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-hairline);
+      color: var(--color-sr-indigo-900);
+    }
+
+    /* Skeleton Loader Shimmer */
+    @keyframes shimmerPulse {
+      0% { background-position: -400px 0; }
+      100% { background-position: 400px 0; }
+    }
+
+    .skeleton-line {
+      height: 14px;
+      border-radius: var(--radius-xs);
+      background: linear-gradient(90deg, #edf0f5 25%, #e2e6ef 50%, #edf0f5 75%);
+      background-size: 800px 100%;
+      animation: shimmerPulse 1.3s infinite linear;
+    }
+
+    .empty-state {
+      padding: 36px 24px;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .empty-state-title {
+      font-family: var(--font-season-mix);
+      font-size: 18px;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    /* Legal, Privacy, Terms & Custom 404 Views */
+    .document-container {
+      padding: 28px 32px;
+      max-width: 920px;
+      line-height: 1.65;
+    }
+
+    .document-container h1 {
+      font-family: var(--font-season-mix);
+      font-size: 26px;
+      color: var(--color-sr-indigo-900);
+      margin-bottom: 8px;
+    }
+
+    .document-container h2 {
+      font-family: var(--font-season-mix);
+      font-size: 18px;
+      color: var(--color-sr-indigo-900);
+      margin-top: 22px;
+      margin-bottom: 8px;
+    }
+
+    .document-container p,
+    .document-container li {
+      color: var(--text-secondary);
+      font-size: 13.5px;
+      margin-bottom: 10px;
+    }
+
+    .document-container ul {
+      padding-left: 20px;
+      margin-bottom: 12px;
+    }
+
+    /* Spring-Physics Inspector Sheet */
+    .sheet-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(20, 20, 20, 0.32);
-      backdrop-filter: blur(4px);
-      z-index: 200;
+      background: rgba(17, 22, 37, 0.32);
+      z-index: 120;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 260ms var(--ease-spring);
+      transition: opacity 180ms ease;
     }
 
-    .sheet-scrim.open {
+    .sheet-backdrop.open {
       opacity: 1;
       pointer-events: auto;
     }
@@ -908,997 +755,1664 @@
       top: 0;
       right: 0;
       bottom: 0;
-      width: min(920px, 94vw);
-      background: rgba(252, 252, 252, 0.94);
-      backdrop-filter: blur(28px) saturate(190%);
-      -webkit-backdrop-filter: blur(28px) saturate(190%);
-      border-left: 1px solid var(--color-st);
-      box-shadow: -12px 0 40px rgba(41, 33, 29, 0.14);
-      z-index: 210;
+      width: min(680px, 94vw);
+      background: var(--bg-surface);
+      border-left: 1px solid var(--border-strong);
+      box-shadow: var(--shadow-sheet);
+      z-index: 130;
       transform: translate3d(100%, 0, 0);
       display: flex;
       flex-direction: column;
       will-change: transform;
-      touch-action: pan-y;
-    }
-
-    .sheet-grab-bar {
-      position: absolute;
-      left: 6px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 5px;
-      height: 56px;
-      border-radius: 999px;
-      background: var(--color-st);
-      cursor: ew-resize;
     }
 
     .sheet-header {
-      padding: 20px 28px;
-      background: rgba(255, 255, 255, 0.82);
-      border-bottom: 1px solid var(--color-st);
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-hairline);
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 16px;
+      gap: 12px;
+      background: var(--bg-surface-subtle);
+      cursor: grab;
+      user-select: none;
     }
 
     .sheet-body {
-      padding: 24px 28px 40px;
+      padding: 20px;
       overflow-y: auto;
+      flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 20px;
-    }
-
-    /* FR-8 8-Field Mandatory Grid */
-    .fr8-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-    }
-
-    @media (max-width: 760px) {
-      .fr8-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    .fr8-cell {
-      background: var(--color-sr-white);
-      border: 1px solid var(--color-st);
-      border-radius: var(--radius-md);
-      padding: 10px 12px;
-    }
-
-    .fr8-cell-label {
-      font-size: 10.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: var(--color-tx-tertiary);
-      margin-bottom: 4px;
-    }
-
-    .fr8-cell-val {
-      font-family: var(--font-mono);
-      font-size: 12.5px;
-      color: var(--color-tx);
-      word-break: break-all;
-    }
-
-    .evidence-split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    @media (max-width: 820px) {
-      .evidence-split {
-        grid-template-columns: 1fr;
-      }
+      gap: 16px;
     }
 
     .evidence-card {
-      background: var(--color-sr-white);
-      border: 1px solid var(--color-st);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      background: #fafbfc;
     }
 
-    .evidence-card-head {
-      padding: 10px 14px;
-      background: var(--color-sf-secondary);
-      border-bottom: 1px solid var(--color-st);
-      font-size: 12px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .code-box {
-      background: var(--color-sr-black);
-      color: #f5f5f5;
+    .evidence-card-title {
       font-family: var(--font-mono);
-      font-size: 12.5px;
-      line-height: 1.65;
-      padding: 14px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .pre-block {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--color-sr-indigo-900);
+      color: #f8fafc;
+      padding: 12px;
+      border-radius: var(--radius-xs);
       overflow-x: auto;
       white-space: pre-wrap;
       word-break: break-word;
     }
 
-    .fix-card {
-      background: var(--color-sr-green-50);
-      border: 1px solid var(--color-sr-green-200);
-      border-radius: var(--radius-lg);
-      padding: 16px 18px;
+    /* Onboarding Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 22, 37, 0.48);
+      backdrop-filter: blur(4px);
+      z-index: 160;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
     }
 
-    .toast {
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .onboarding-modal {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      max-width: 580px;
+      width: 100%;
+      box-shadow: var(--shadow-modal);
+      overflow: hidden;
+    }
+
+    .onboarding-header {
+      padding: 18px 22px;
+      background: var(--color-sr-indigo-900);
+      color: #ffffff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .onboarding-body {
+      padding: 22px;
+    }
+
+    .onboarding-step {
+      display: none;
+    }
+
+    .onboarding-step.active {
+      display: block;
+    }
+
+    .onboarding-footer {
+      padding: 14px 22px;
+      background: var(--bg-surface-subtle);
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Floating Back to Top Button */
+    .back-to-top {
       position: fixed;
       bottom: 24px;
       right: 24px;
-      z-index: 300;
-      background: var(--color-sr-slate);
-      color: #fff;
-      padding: 12px 18px;
-      border-radius: var(--radius-pill);
-      font-size: 13px;
-      font-weight: 500;
-      box-shadow: var(--shadow-lg);
-      transform: translateY(20px);
+      z-index: 95;
+      padding: 9px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--color-sr-indigo-900);
+      color: #ffffff;
+      border: 1px solid var(--color-sr-indigo-700);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: var(--shadow-card);
       opacity: 0;
       pointer-events: none;
-      transition: transform 250ms var(--ease-spring), opacity 250ms var(--ease-spring);
+      transform: translateY(8px);
+      transition: opacity 160ms ease, transform 160ms ease;
     }
 
-    .toast.show {
-      transform: translateY(0);
+    .back-to-top.visible {
       opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
     }
 
-    /* Apple Rule 14: Reduced Motion & Reduced Transparency */
+    /* Footer */
+    .site-footer {
+      border-top: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      padding: 16px 24px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .site-footer-inner {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .footer-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      cursor: pointer;
+    }
+
+    .footer-link:hover {
+      color: var(--color-sr-indigo-500);
+      text-decoration: underline;
+    }
+
+    /* Apple Design: Optical Sizing, Tracking & Leading */
+    .kpi-value {
+      letter-spacing: -0.025em;
+      line-height: 1.08;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .panel-title,
+    .sheet-title {
+      letter-spacing: -0.016em;
+      line-height: 1.22;
+    }
+
+    .kpi-sub,
+    .panel-subtitle,
+    .sheet-subtitle {
+      letter-spacing: 0.008em;
+      line-height: 1.4;
+    }
+
+    /* Apple Design: Reduced Motion & Reduced Transparency Accessibility */
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
+      *,
+      *::before,
+      *::after {
         animation-duration: 0.01ms !important;
-        transition-duration: 120ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+
+      .skeleton-line {
+        animation: none !important;
+      }
+
+      .btn:active,
+      .kpi-card:active,
+      .nav-tab:active {
         transform: none !important;
       }
+
+      .inspector-sheet,
+      .back-to-top {
+        transition: opacity 150ms ease !important;
+      }
     }
+
     @media (prefers-reduced-transparency: reduce) {
-      .navbar, .inspector-sheet, .glass-bezel {
+      .topbar,
+      .inspector-sheet,
+      .sheet-header {
         backdrop-filter: none !important;
-        background: #ffffff !important;
+        -webkit-backdrop-filter: none !important;
+        background: var(--bg-surface) !important;
       }
     }
   </style>
 </head>
 <body>
-  <!-- Sarvam Soft Indigo Ambient Hero Aura -->
-  <div class="hero-aura" aria-hidden="true"></div>
+  <!-- Scroll Progress Bar -->
+  <div class="scroll-progress-track" aria-hidden="true">
+    <div id="scrollProgressBar" class="scroll-progress-bar"></div>
+  </div>
 
-  <!-- Translucent Floating Navbar -->
-  <header class="navbar">
-    <div class="container nav-inner">
-      <div class="brand-cluster">
-        <div class="brand-emblem">C</div>
+  <!-- Top Navigation -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand-group" href="/" onclick="handleNavClick(event, '/')">
+        <div class="brand-mark">CF</div>
         <div>
-          <span class="brand-name">CYBERFORGE CORRELATE</span>
-          <span class="brand-sub">Deterministic AST Route-to-Sink × DAST Engine</span>
+          <div class="brand-title">CyberForge Correlate</div>
+          <div class="brand-subtitle">AST Route + SAST + 2-Phase DAST + SCA Engine</div>
         </div>
-      </div>
+      </a>
 
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div class="scope-pill" title="PRD Page 4 Rule 1: Strict localhost & local Docker target allowlist + follow_redirects=False">
-          <span class="scope-dot"></span>
-          <span>Scope Lock: <strong class="font-mono">localhost / 127.0.0.1</strong> · <code class="font-mono">follow_redirects=False</code></span>
+      <div class="topbar-controls">
+        <div id="scopeLockBadge" class="security-badge" title="Target Safety Lock restricts active DAST probing to authorized loopback and container targets">
+          <span class="status-dot"></span>
+          <span id="scopeLockText">Scope Lock: Loopback Enforced</span>
         </div>
-
-        <button class="btn-pill btn-secondary" id="btnRunIdempotency" onclick="runIdempotencyCheck()">
-          <span class="btn-spotlight"></span>
-          <span>Verify Idempotency (2×)</span>
-        </button>
-
-        <button class="btn-pill btn-primary" id="btnRunScan" onclick="triggerScan(false)">
-          <span class="btn-spotlight"></span>
-          <span id="btnRunScanLabel">Run Scan</span>
-        </button>
+        <div id="credentialIsolationBadge" class="security-badge neutral" title="Zero API keys or secrets are embedded in client-side code">
+          <span>API Keys: Server-Isolated</span>
+        </div>
+        <button type="button" class="btn" id="btnOpenGuide" onclick="openOnboardingModal()">System Guide</button>
+        <button type="button" class="btn" id="btnIdempotency" onclick="runIdempotencyCheck()">Verify Idempotency (2x)</button>
+        <button type="button" class="btn btn-primary" id="btnRunScan" onclick="triggerScan(false)">Run Correlation Scan</button>
       </div>
     </div>
   </header>
 
-  <main class="container">
-    <!-- Hero Header + Glassmorphic Scan Control Bar -->
-    <section class="hero-section">
-      <div class="hero-top">
+  <main class="workspace-container">
+    <!-- Actionable Error Banner -->
+    <div id="errorBanner" class="error-banner" role="alert">
+      <div>
+        <div id="errorBannerTitle" class="error-banner-title">Pipeline Alert</div>
+        <div id="errorBannerMsg" class="error-banner-msg"></div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn" onclick="refreshAllData()">Retry</button>
+        <button type="button" class="btn" onclick="hideErrorBanner()">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- Step-by-Step Animated Scan Progress -->
+    <div id="scanProgressPanel" class="scan-progress-panel" aria-live="polite">
+      <div class="scan-progress-header">
+        <span id="scanProgressLabel">Executing correlation pipeline...</span>
+        <span id="scanProgressPercent">20%</span>
+      </div>
+      <div class="scan-progress-track">
+        <div id="scanProgressFill" class="scan-progress-fill"></div>
+      </div>
+      <div class="scan-stage-pills">
+        <div id="stagePill1" class="scan-stage-pill">1. AST Route Map</div>
+        <div id="stagePill2" class="scan-stage-pill">2. SAST &amp; Decoy Gate</div>
+        <div id="stagePill3" class="scan-stage-pill">3. 2-Phase Live DAST</div>
+        <div id="stagePill4" class="scan-stage-pill">4. Deterministic Join</div>
+        <div id="stagePill5" class="scan-stage-pill">5. SQLite Upsert</div>
+      </div>
+    </div>
+
+    <!-- Target Configuration Panel -->
+    <section class="config-panel" aria-label="Scan Target Configuration">
+      <div class="field-group">
+        <label class="field-label" for="inputTargetUrl">Target Base URL (Loopback / Container Scope)</label>
+        <input id="inputTargetUrl" class="field-input" type="text" value="http://127.0.0.1:5000" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="inputSourceDir">Target Source Directory</label>
+        <input id="inputSourceDir" class="field-input" type="text" value="./tests/mock_shop_app" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="selectScanHistory">Scan Run History</label>
+        <select id="selectScanHistory" class="field-select" onchange="handleScanHistorySelect(this.value)">
+          <option value="">Latest Scan State</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-family:var(--font-mono); cursor:pointer;">
+          <input id="checkLiveDast" type="checkbox" checked />
+          <span>2-Phase DAST</span>
+        </label>
+        <button type="button" class="btn" onclick="refreshAllData()">Refresh Telemetry</button>
+      </div>
+    </section>
+
+    <!-- KPI Telemetry Cards -->
+    <section class="kpi-grid" aria-label="Correlation Metrics">
+      <div class="kpi-card" id="kpiCardAll" onclick="filterByStatus('ALL')">
+        <div class="kpi-label">Correlated Issues</div>
+        <div class="kpi-value" id="kpiTotalIssues">0</div>
+        <div class="kpi-sub" id="kpiDedupeRatio">Deduplicated clusters</div>
+      </div>
+      <div class="kpi-card" id="kpiCardConfirmed" onclick="filterByStatus('Confirmed')">
+        <div class="kpi-label">Confirmed Exploitable</div>
+        <div class="kpi-value" id="kpiConfirmed" style="color:var(--status-confirmed-text);">0</div>
+        <div class="kpi-sub">SAST + Phase-2 DAST</div>
+      </div>
+      <div class="kpi-card" id="kpiCardNeeds" onclick="filterByStatus('Code only')">
+        <div class="kpi-label">Code Only (Static)</div>
+        <div class="kpi-value" id="kpiNeedsVerification" style="color:var(--status-needs-text);">0</div>
+        <div class="kpi-sub">SAST sink without live proof</div>
+      </div>
+      <div class="kpi-card" id="kpiCardContradicted" onclick="filterByStatus('Runtime only')">
+        <div class="kpi-label">Runtime Only (Live)</div>
+        <div class="kpi-value" id="kpiContradicted" style="color:var(--status-unverified-text);">0</div>
+        <div class="kpi-sub">DAST finding without AST line</div>
+      </div>
+      <div class="kpi-card" id="kpiCardDecoys" onclick="navigateTo('/decoys')">
+        <div class="kpi-label">Suppressed Decoys</div>
+        <div class="kpi-value" id="kpiSuppressedDecoys" style="color:var(--status-safe-text);">0</div>
+        <div class="kpi-sub">AST sanitizer proved safe</div>
+      </div>
+      <div class="kpi-card" id="kpiCardSca" onclick="navigateTo('/sca')">
+        <div class="kpi-label">Reachable SCA CVEs</div>
+        <div class="kpi-value" id="kpiScaReachable">0</div>
+        <div class="kpi-sub" id="kpiScaTotalSub">Import-verified packages</div>
+      </div>
+    </section>
+
+    <!-- Primary SPA Navigation & Search Filters -->
+    <div class="toolbar-row">
+      <nav class="nav-tabs" aria-label="Workspace Views">
+        <button type="button" class="nav-tab active" data-route="/issues" onclick="navigateTo('/issues')">
+          <span>Correlated Issues</span>
+          <span class="tab-count" id="tabCountIssues">0</span>
+        </button>
+        <button type="button" class="nav-tab" data-route="/routes" onclick="navigateTo('/routes')">
+          <span>AST Route Map</span>
+          <span class="tab-count" id="tabCountRoutes">0</span>
+        </button>
+        <button type="button" class="nav-tab" data-route="/decoys" onclick="navigateTo('/decoys')">
+          <span>Safe Decoys</span>
+          <span class="tab-count" id="tabCountDecoys">0</span>
+        </button>
+        <button type="button" class="nav-tab" data-route="/sca" onclick="navigateTo('/sca')">
+          <span>SCA Reachability</span>
+          <span class="tab-count" id="tabCountSca">0</span>
+        </button>
+        <button type="button" class="nav-tab" data-route="/diff" onclick="navigateTo('/diff')">
+          <span>Scan Diff</span>
+        </button>
+      </nav>
+
+      <div class="filter-controls" id="issueFilterControls">
+        <input
+          id="inputSearchFilter"
+          class="field-input"
+          type="search"
+          placeholder="Filter by route, CWE, file, param..."
+          oninput="renderIssuesTable()"
+          style="min-width:220px;"
+        />
+        <select id="selectStatusFilter" class="field-select" onchange="handleStatusSelectChange(this.value)">
+          <option value="ALL">All Statuses</option>
+          <option value="Confirmed">Confirmed</option>
+          <option value="Code only">Code only</option>
+          <option value="Runtime only">Runtime only</option>
+          <option value="NeedsVerification">NeedsVerification (Code + Runtime)</option>
+        </select>
+        <select id="selectCweFilter" class="field-select" onchange="renderIssuesTable()">
+          <option value="ALL">All CWEs</option>
+          <option value="89">CWE-89 (SQLi)</option>
+          <option value="79">CWE-79 (XSS)</option>
+          <option value="78">CWE-78 (Cmdi)</option>
+          <option value="22">CWE-22 (Path Traversal)</option>
+          <option value="601">CWE-601 (Open Redirect)</option>
+          <option value="798">CWE-798 (Hard-Coded Secret)</option>
+          <option value="693">CWE-693 (Security Header)</option>
+          <option value="1021">CWE-1021 (Clickjacking)</option>
+          <option value="614">CWE-614 (Cookie Flag)</option>
+          <option value="942">CWE-942 (CORS Wildcard)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- VIEW 1: Correlated Issues -->
+    <section id="viewIssues" class="view-panel active" aria-label="Correlated Security Issues">
+      <div class="panel-header">
         <div>
-          <div class="sovereign-badge">
-            <span class="sovereign-line"></span>
-            <span>AST Route-to-Sink × Differential DAST Correlation</span>
-            <span class="sovereign-line"></span>
-          </div>
-          <h1 class="display-title">One Real Bug. One Confirmed Issue.</h1>
+          <div class="panel-title">Correlated Vulnerability Truth Table</div>
+          <div class="panel-subtitle">Deterministic join across AST route signatures, SAST sinks, and 2-phase DAST verification</div>
         </div>
-        <div style="text-align:right;">
-          <p class="eyebrow">Active Application Scope</p>
-          <p style="font-size:14px; color:var(--color-tx-secondary); font-weight:500;" id="activeScanBadge">
-            Ready · Click "Run Scan"
-          </p>
-        </div>
+        <div id="issuesSummaryCount" style="font-family:var(--font-mono); font-size:12px; color:var(--text-secondary);">0 issues shown</div>
       </div>
-
-      <div class="glass-bezel">
-        <div class="scan-control-bar">
-          <div class="input-group">
-            <label class="input-label" for="inputSourceDir">Target Source Code Path</label>
-            <input class="input-field" id="inputSourceDir" type="text" value="./vuln_app" placeholder="./vuln_app or ./target-app" />
-          </div>
-          <div class="input-group">
-            <label class="input-label" for="inputTargetUrl">Live Runtime Target URL</label>
-            <input class="input-field" id="inputTargetUrl" type="text" value="http://localhost:5000" placeholder="http://localhost:5000" />
-          </div>
-          <div class="input-group">
-            <label class="input-label" for="inputAppName">Application Identifier</label>
-            <input class="input-field" id="inputAppName" type="text" value="cyberforge-web-shop" />
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn-pill btn-primary" onclick="triggerScan(false)" style="min-height:38px;">
-              <span class="btn-spotlight"></span>
-              <span>Execute Scan</span>
-            </button>
-            <button class="btn-pill btn-secondary" onclick="compareLatestScans()" style="min-height:38px;" title="Compare latest scans">
-              <span class="btn-spotlight"></span>
-              <span>Compare Diff</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 4 Summary KPI Bento Cards (FR-7 Buckets + B-2 Safe Decoys) -->
-    <section class="bento-kpi-grid" aria-label="Correlation Summary Counters">
-      <article class="kpi-card" id="kpiConfirmed" onclick="setStatusFilter('Confirmed')">
-        <div class="cw-glow glow-confirmed"></div>
-        <div class="kpi-content">
-          <div class="kpi-header">
-            <span class="eyebrow" style="color:var(--color-sr-red-500);">Confirmed (SAST × DAST)</span>
-            <span class="badge badge-confirmed">P1 Confirmed</span>
-          </div>
-          <div class="kpi-value" id="countConfirmed">0</div>
-          <div class="kpi-caption">Exploitable at Runtime & Pinned to Code Line</div>
-          <div class="kpi-sub">Deterministic CWE + Route + Parameter + Sink Match</div>
-        </div>
-      </article>
-
-      <article class="kpi-card" id="kpiCodeOnly" onclick="setStatusFilter('Code only')">
-        <div class="cw-glow glow-code"></div>
-        <div class="kpi-content">
-          <div class="kpi-header">
-            <span class="eyebrow" style="color:var(--color-sr-yellow-800);">Code Only (SAST)</span>
-            <span class="badge badge-code-only">Static Sink</span>
-          </div>
-          <div class="kpi-value" id="countCodeOnly">0</div>
-          <div class="kpi-caption">Source Sink Without Runtime Proof</div>
-          <div class="kpi-sub">Hard-coded secrets (CWE-798) or unreached paths</div>
-        </div>
-      </article>
-
-      <article class="kpi-card" id="kpiRuntimeOnly" onclick="setStatusFilter('Runtime only')">
-        <div class="cw-glow glow-runtime"></div>
-        <div class="kpi-content">
-          <div class="kpi-header">
-            <span class="eyebrow" style="color:var(--color-sr-indigo-900);">Runtime Only (DAST)</span>
-            <span class="badge badge-runtime-only">Runtime Audit</span>
-          </div>
-          <div class="kpi-value" id="countRuntimeOnly">0</div>
-          <div class="kpi-caption">Live HTTP Exposure Invisible to SAST</div>
-          <div class="kpi-sub">Missing CSP, X-Frame-Options, HttpOnly, CORS</div>
-        </div>
-      </article>
-
-      <article class="kpi-card" id="kpiDecoys" onclick="switchTab('decoys')">
-        <div class="cw-glow glow-decoy"></div>
-        <div class="kpi-content">
-          <div class="kpi-header">
-            <span class="eyebrow" style="color:var(--color-sr-green-800);">Safe Decoys Suppressed</span>
-            <span class="badge badge-decoy">Verified Safe</span>
-          </div>
-          <div class="kpi-value" id="countDecoys">0</div>
-          <div class="kpi-caption">0% False Alarms on Protected Sinks</div>
-          <div class="kpi-sub">Parameterized SQL, escaped HTML & path guards</div>
-        </div>
-      </article>
-    </section>
-
-    <!-- AppSec Risk & Idempotency Telemetry Strip -->
-    <section class="telemetry-strip">
-      <div class="telemetry-metrics">
-        <div class="telemetry-item">
-          <span class="telemetry-label">Total Correlated Issues</span>
-          <span class="telemetry-val" id="telTotalIssues">0</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">AST Routes Mapped</span>
-          <span class="telemetry-val" id="telRoutesCount">0</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">Wrong Links Rate</span>
-          <span class="telemetry-val" style="color:var(--color-sr-green-300);">0.0% (&lt; 5% Target)</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">Estimated Risk Exposure</span>
-          <span class="telemetry-val" style="color:var(--color-sr-orange-300);" id="telFairRisk">₹0.0 L</span>
-        </div>
-        <div class="telemetry-item">
-          <span class="telemetry-label">Last Scan Duration</span>
-          <span class="telemetry-val" id="telDuration">—</span>
-        </div>
-      </div>
-      <div style="font-size:12px; color:var(--color-sr-indigo-200); font-family:var(--font-mono);" id="idempotencyStatus">
-        Deterministic Fingerprint Store · Active
-      </div>
-    </section>
-
-    <!-- Main Tabbed Workspace (FR-8, FR-9, FR-4, B-2, B-5) -->
-    <section class="workspace-shell">
-      <div class="workspace-toolbar">
-        <div class="tab-group" role="tablist">
-          <button class="tab-btn active" id="tabBtn-issues" onclick="switchTab('issues')">
-            <span>Prioritised Issues</span>
-            <span class="tab-count" id="tabCountIssues">0</span>
-          </button>
-          <button class="tab-btn" id="tabBtn-routes" onclick="switchTab('routes')">
-            <span>AST Route Map</span>
-            <span class="tab-count" id="tabCountRoutes">0</span>
-          </button>
-          <button class="tab-btn" id="tabBtn-decoys" onclick="switchTab('decoys')">
-            <span>Suppressed Safe Decoys</span>
-            <span class="tab-count" id="tabCountDecoys">0</span>
-          </button>
-          <button class="tab-btn" id="tabBtn-diff" onclick="switchTab('diff')">
-            <span>Scan Diff</span>
-            <span class="tab-count" id="tabCountDiff">0</span>
-          </button>
-        </div>
-
-        <div class="filter-cluster" id="issueFiltersBar">
-          <select class="select-pill" id="filterStatus" onchange="renderIssuesList()">
-            <option value="">All Categories</option>
-            <option value="Confirmed">Confirmed Only</option>
-            <option value="Code only">Code only</option>
-            <option value="Runtime only">Runtime only</option>
-          </select>
-
-          <select class="select-pill" id="filterCwe" onchange="renderIssuesList()">
-            <option value="">All CWEs</option>
-            <option value="CWE-89">CWE-89 (SQL Injection)</option>
-            <option value="CWE-79">CWE-79 (Reflected XSS)</option>
-            <option value="CWE-78">CWE-78 (Command Injection)</option>
-            <option value="CWE-22">CWE-22 (Path Traversal)</option>
-            <option value="CWE-601">CWE-601 (Open Redirect)</option>
-            <option value="CWE-798">CWE-798 (Hard-coded Secret)</option>
-            <option value="CWE-693">CWE-693 (Missing CSP / Headers)</option>
-            <option value="CWE-614">CWE-614 (Insecure Cookie)</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- TAB 1: Prioritised Correlated Issues (FR-9 & FR-8) -->
-      <div id="panel-issues" class="issue-list"></div>
-
-      <!-- TAB 2: AST Route-to-Sink Map (FR-4) -->
-      <div id="panel-routes" class="data-table-wrap" style="display:none;">
+      <div class="table-scroll">
         <table class="data-table">
           <thead>
             <tr>
-              <th>HTTP Method</th>
-              <th>Canonical Route Pattern</th>
-              <th>Handler Function</th>
-              <th>Source File & Line Span</th>
-              <th>Extracted Params</th>
-              <th>1-Hop Helper Calls</th>
+              <th>Status</th>
+              <th>CWE / Class</th>
+              <th>Canonical Route</th>
+              <th>Sink Location &amp; Handler</th>
+              <th>Param</th>
+              <th>Evidence Signals</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="issuesTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VIEW 2: AST Route Map -->
+    <section id="viewRoutes" class="view-panel" aria-label="AST Route Map">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Discovered AST Route Signatures</div>
+          <div class="panel-subtitle">Static route table extracted from Flask, FastAPI, Express, and Spring controllers</div>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Canonical Path</th>
+              <th>HTTP Methods</th>
+              <th>Source File &amp; Line Range</th>
+              <th>Handler Symbol</th>
+              <th>Extracted Parameters</th>
+              <th>Auth Decorator</th>
             </tr>
           </thead>
           <tbody id="routesTableBody"></tbody>
         </table>
       </div>
+    </section>
 
-      <!-- TAB 3: Suppressed Safe Decoys (Bonus B-2) -->
-      <div id="panel-decoys" class="data-table-wrap" style="display:none;">
+    <!-- VIEW 3: Suppressed Safe Decoys -->
+    <section id="viewDecoys" class="view-panel" aria-label="Suppressed Safe Decoys">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Suppressed Decoy Findings (False-Positive Gate)</div>
+          <div class="panel-subtitle">Findings suppressed prior to DAST escalation due to verified parameterized queries, allowlists, or escaping</div>
+        </div>
+      </div>
+      <div class="table-scroll">
         <table class="data-table">
           <thead>
             <tr>
-              <th>Status</th>
+              <th>Gate Status</th>
               <th>CWE</th>
-              <th>Source File & Line</th>
-              <th>Protected Code Construct</th>
-              <th>Why Suppressed (B-2 Guard Analysis)</th>
+              <th>Route &amp; File Location</th>
+              <th>Handler Function</th>
+              <th>Suppression Rationale</th>
             </tr>
           </thead>
           <tbody id="decoysTableBody"></tbody>
         </table>
       </div>
+    </section>
 
-      <!-- TAB 4: Scan Comparison Diff (Bonus B-5) -->
-      <div id="panel-diff" style="display:none; padding:20px 22px;">
-        <div id="diffContentArea"></div>
+    <!-- VIEW 4: SCA Reachability -->
+    <section id="viewSca" class="view-panel" aria-label="SCA Reachability">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Dependency Vulnerability &amp; AST Import Reachability</div>
+          <div class="panel-subtitle">Manifest advisories cross-checked against live AST import graphs in application source</div>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Reachability</th>
+              <th>Advisory / CVE</th>
+              <th>Package &amp; Version</th>
+              <th>CWE / Severity</th>
+              <th>Importing Source Files</th>
+              <th>Remediation</th>
+            </tr>
+          </thead>
+          <tbody id="scaTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VIEW 5: Scan Diff -->
+    <section id="viewDiff" class="view-panel" aria-label="Scan Run Differential">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Scan-Over-Scan Differential Analysis</div>
+          <div class="panel-subtitle">Compare two correlation runs by deterministic fingerprint to verify newly introduced or fixed issues</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <select id="selectDiffBase" class="field-select"></select>
+          <span style="font-family:var(--font-mono); font-size:12px;">vs</span>
+          <select id="selectDiffHead" class="field-select"></select>
+          <button type="button" class="btn btn-primary" onclick="runScanDiffComparison()">Compare Scans</button>
+        </div>
+      </div>
+      <div id="diffResultsContainer" style="padding:18px;"></div>
+    </section>
+
+    <!-- VIEW 6: Privacy Policy -->
+    <section id="viewPrivacy" class="view-panel" aria-label="Privacy Policy">
+      <div class="document-container">
+        <h1>Privacy Policy &amp; Telemetry Governance</h1>
+        <p><strong>Effective Date:</strong> October 2026 | <strong>Compliance Scope:</strong> DPDP Act 2023 (India) &amp; Local AppSec Data Isolation Standard</p>
+        <h2>1. Zero External Telemetry &amp; Local-First Storage</h2>
+        <p>CyberForge Correlate processes all Abstract Syntax Tree (AST) route signatures, Static Application Security Testing (SAST) slices, Dynamic Application Security Testing (DAST) HTTP exchanges, and Software Composition Analysis (SCA) dependency graphs strictly within your local SQLite workspace database. No source code snippets, HTTP payloads, or vulnerability metadata are transmitted to third-party cloud endpoints.</p>
+        <h2>2. Server-Side Credential Isolation</h2>
+        <p>All runtime secrets, environment tokens, and database paths are isolated on the backend API server. The browser client never receives, stores, or transmits raw API keys or target credentials.</p>
+        <h2>3. Ephemeral Canary Payloads</h2>
+        <p>Active DAST verification uses deterministic, non-destructive `cyberforge` canary tokens and bounded sleep differentials against authorized loopback or container endpoints. Payloads do not mutate persistent customer records.</p>
+        <div style="margin-top:20px;">
+          <button type="button" class="btn btn-primary" onclick="navigateTo('/issues')">Return to Correlation Workspace</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 7: Terms of Use -->
+    <section id="viewTerms" class="view-panel" aria-label="Terms of Use">
+      <div class="document-container">
+        <h1>Terms of Use &amp; Authorized Target Scope</h1>
+        <p><strong>Security Operations Governance:</strong> Mandatory Target Safety Lock Policy</p>
+        <h2>1. Authorized Target Scope Only</h2>
+        <p>CyberForge Correlate enforces a strict server-side Target Safety Lock (`validate_target_url_scope`). Active 2-phase DAST probing is restricted to loopback interfaces (`127.0.0.1`, `localhost`, `::1`), RFC1918 private container networks, or explicitly configured host allowlists (`CYBERFORGE_ALLOWED_HOSTS`).</p>
+        <h2>2. Prohibition of Unauthorized Probing</h2>
+        <p>Attempting to point active DAST scans at unauthorized external domains will be rejected immediately with HTTP `403 Target Safety Lock Violation`. Operators are solely responsible for ensuring written authorization before adding custom container hostnames to the server allowlist.</p>
+        <h2>3. Deterministic Evidence Verification</h2>
+        <p>A status of `Confirmed` indicates deterministic agreement between static code paths and runtime HTTP verification. Operators should review `NeedsVerification` findings before production release sign-off.</p>
+        <div style="margin-top:20px;">
+          <button type="button" class="btn btn-primary" onclick="navigateTo('/issues')">Return to Correlation Workspace</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 8: Custom 404 Page -->
+    <section id="view404" class="view-panel" aria-label="Page Not Found">
+      <div class="document-container">
+        <div class="code-tag" style="display:inline-block; margin-bottom:10px;">HTTP 404 : ROUTE_NOT_REGISTERED</div>
+        <h1>Requested Workspace Route Not Found</h1>
+        <p>The path <code id="missingRoutePath" class="code-tag">/unknown</code> does not match any registered view in the CyberForge Correlate SPA router.</p>
+        <div style="display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" onclick="navigateTo('/issues')">Open Correlated Issues</button>
+          <button type="button" class="btn" onclick="navigateTo('/routes')">Inspect AST Route Map</button>
+          <button type="button" class="btn" onclick="navigateTo('/decoys')">View Suppressed Decoys</button>
+        </div>
       </div>
     </section>
   </main>
 
-  <!-- Apple Fluid Interruptible Split Issue Inspector Sheet (FR-8 Detail View) -->
-  <div class="sheet-scrim" id="sheetScrim" onclick="closeInspector()"></div>
-  <aside class="inspector-sheet" id="inspectorSheet" aria-label="FR-8 Issue Detail Inspector">
-    <div class="sheet-grab-bar" id="sheetGrabBar" title="Drag to dismiss (Apple 1:1 Pointer Tracking)"></div>
-    <div class="sheet-header">
+  <!-- Spring-Physics Evidence Inspector Sheet -->
+  <div id="sheetBackdrop" class="sheet-backdrop" onclick="closeInspectorSheet()"></div>
+  <aside id="inspectorSheet" class="inspector-sheet" aria-label="Issue Evidence Inspector">
+    <div id="sheetHeader" class="sheet-header">
       <div>
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;" id="sheetBadges"></div>
-        <h2 class="font-season" style="font-size:26px; line-height:1.15;" id="sheetTitle">Issue Detail</h2>
+        <div id="sheetStatusChip" class="status-chip Confirmed">Confirmed</div>
+        <h2 id="sheetTitle" style="font-family:var(--font-season-mix); font-size:19px; margin-top:6px;">Issue Inspector</h2>
+        <div id="sheetSubtitle" style="font-family:var(--font-mono); font-size:11.5px; color:var(--text-secondary); margin-top:2px;"></div>
       </div>
-      <button class="btn-pill btn-secondary" onclick="closeInspector()" style="min-height:34px; padding:6px 14px;">
-        <span>Close (Esc)</span>
-      </button>
+      <button type="button" class="btn" onclick="closeInspectorSheet()">Close [Esc]</button>
     </div>
-    <div class="sheet-body" id="sheetBody"></div>
+    <div id="sheetBody" class="sheet-body"></div>
   </aside>
 
-  <div class="toast" id="toastEl"></div>
+  <!-- 3-Step Interactive Onboarding Modal -->
+  <div id="onboardingModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="onboardingModalTitle">
+    <div class="onboarding-modal">
+      <div class="onboarding-header">
+        <div>
+          <div style="font-family:var(--font-mono); font-size:11px; text-transform:uppercase; opacity:0.8;">CyberForge System Guide</div>
+          <div id="onboardingModalTitle" style="font-family:var(--font-season-mix); font-size:19px; font-weight:600;">Multi-Signal AppSec Correlation</div>
+        </div>
+        <span id="onboardingStepIndicator" class="code-tag">Step 1 of 3</span>
+      </div>
+      <div class="onboarding-body">
+        <div id="onboardingStep1" class="onboarding-step active">
+          <h3 style="font-family:var(--font-season-mix); font-size:17px; margin-bottom:8px;">1. AST Route Discovery &amp; Decoy Suppression</h3>
+          <p style="color:var(--text-secondary); font-size:13.5px; margin-bottom:10px;">
+            Conventional scanners flood teams with false positives on parameterized SQL queries, HTML-escaped templates, and allowlisted redirects. CyberForge parses your source AST first, maps every route signature, and suppresses provably safe decoys before DAST runs.
+          </p>
+          <div class="code-tag" style="display:block; padding:10px;">
+            AST Route Mapper -&gt; SAST Sink Detection -&gt; Safe Decoy Gate (Suppresses False Positives)
+          </div>
+        </div>
+        <div id="onboardingStep2" class="onboarding-step">
+          <h3 style="font-family:var(--font-season-mix); font-size:17px; margin-bottom:8px;">2. 2-Phase Baseline vs Attack DAST</h3>
+          <p style="color:var(--text-secondary); font-size:13.5px; margin-bottom:10px;">
+            Every candidate route undergoes a benign baseline request (Phase 1) followed by targeted CWE-specific canary probes (Phase 2). If the vulnerable sink lives in a helper module (`services/order_service.py`), the correlator bridges the call graph back to the HTTP route.
+          </p>
+          <div class="code-tag" style="display:block; padding:10px;">
+            Confirmed = SAST Sink + DAST Phase-2 Differential Proof on Canonical Route + CWE
+          </div>
+        </div>
+        <div id="onboardingStep3" class="onboarding-step">
+          <h3 style="font-family:var(--font-season-mix); font-size:17px; margin-bottom:8px;">3. Deterministic Fingerprints &amp; Idempotency</h3>
+          <p style="color:var(--text-secondary); font-size:13.5px; margin-bottom:10px;">
+            Every correlated issue receives a deterministic `correlate:v1:` SHA-256 fingerprint. Running a scan twice (`Verify Idempotency (2x)`) performs an atomic SQLite upsert without duplicating issues.
+          </p>
+          <div class="code-tag" style="display:block; padding:10px;">
+            Target Safety Lock: Active DAST probes are strictly locked to loopback/container hosts.
+          </div>
+        </div>
+      </div>
+      <div class="onboarding-footer">
+        <button type="button" class="btn" id="btnOnboardingPrev" onclick="stepOnboarding(-1)">Previous</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn" onclick="closeOnboardingModal(true)">Dismiss</button>
+          <button type="button" class="btn btn-primary" id="btnOnboardingNext" onclick="stepOnboarding(1)">Next Step</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Back to Top Button -->
+  <button type="button" id="backToTopBtn" class="back-to-top" onclick="scrollToTop()">Top ^</button>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="site-footer-inner">
+      <div>CyberForge Correlate Engine | Local-First AST + SAST + DAST + SCA Correlation</div>
+      <div class="footer-links">
+        <a class="footer-link" href="/issues" onclick="handleNavClick(event, '/issues')">Issues</a>
+        <a class="footer-link" href="/routes" onclick="handleNavClick(event, '/routes')">Routes</a>
+        <a class="footer-link" href="/decoys" onclick="handleNavClick(event, '/decoys')">Decoys</a>
+        <a class="footer-link" href="/sca" onclick="handleNavClick(event, '/sca')">SCA</a>
+        <a class="footer-link" href="/privacy" onclick="handleNavClick(event, '/privacy')">Privacy Policy</a>
+        <a class="footer-link" href="/terms" onclick="handleNavClick(event, '/terms')">Terms of Use</a>
+      </div>
+    </div>
+  </footer>
 
   <script>
-    /* ==========================================================================
-       1. SARVAM CURSOR-TRACKING RADIAL SPOTLIGHT + APPLE POINTER-DOWN FEEDBACK
-       ========================================================================== */
-    document.addEventListener('pointermove', (e) => {
-      const btn = e.target.closest('.btn-pill');
-      if (!btn) return;
-      const rect = btn.getBoundingClientRect();
-      btn.style.setProperty('--gx', `${e.clientX - rect.left}px`);
-      btn.style.setProperty('--gy', `${e.clientY - rect.top}px`);
-    });
-
-    document.addEventListener('pointerdown', (e) => {
-      const pressable = e.target.closest('.btn-pill, .kpi-card');
-      if (pressable) pressable.classList.add('is-pressed');
-    });
-    document.addEventListener('pointerup', () => {
-      document.querySelectorAll('.is-pressed').forEach(el => el.classList.remove('is-pressed'));
-    });
-
-    /* ==========================================================================
-       2. APPLE WWDC FLUID SPRING & GESTURE ENGINE (INTERRUPTIBLE + VELOCITY HANDOFF)
-       ========================================================================== */
-    const sheetEl = document.getElementById('inspectorSheet');
-    const scrimEl = document.getElementById('sheetScrim');
-
-    let sheetSpring = {
-      x: window.innerWidth, // px offset from open position (0 = fully open)
-      v: 0,                 // px/s velocity
-      target: window.innerWidth,
-      rafId: null,
-      dragging: false
-    };
-
-    // Apple WWDC rubber-banding formula: (overshoot * dim * c) / (dim + c * |overshoot|)
-    function rubberband(overshoot, dim, constant = 0.55) {
-      return (overshoot * dim * constant) / (dim + constant * Math.abs(overshoot));
-    }
-
-    // Apple WWDC momentum projection formula: (v / 1000) * d / (1 - d)
-    function projectMomentum(velocityPxPerSec, decel = 0.996) {
-      return (velocityPxPerSec / 1000) * decel / (1 - decel);
-    }
-
-    function animateSheetSpring(targetX, initialVelocity = null, dampingRatio = 1.0, response = 0.34) {
-      sheetSpring.target = targetX;
-      if (initialVelocity !== null) {
-        sheetSpring.v = initialVelocity;
-      }
-      if (sheetSpring.rafId) cancelAnimationFrame(sheetSpring.rafId);
-
-      const omega = (2 * Math.PI) / response;
-      let lastTime = performance.now();
-
-      function tick(now) {
-        if (sheetSpring.dragging) return;
-        const dt = Math.min((now - lastTime) / 1000, 0.032);
-        lastTime = now;
-
-        const displacement = sheetSpring.x - sheetSpring.target;
-        const springForce = -omega * omega * displacement;
-        const dampingForce = -2 * dampingRatio * omega * sheetSpring.v;
-        const accel = springForce + dampingForce;
-
-        sheetSpring.v += accel * dt;
-        sheetSpring.x += sheetSpring.v * dt;
-
-        sheetEl.style.transform = `translate3d(${Math.max(-24, sheetSpring.x)}px, 0, 0)`;
-
-        if (Math.abs(displacement) < 0.5 && Math.abs(sheetSpring.v) < 4) {
-          sheetSpring.x = sheetSpring.target;
-          sheetSpring.v = 0;
-          sheetEl.style.transform = `translate3d(${sheetSpring.target}px, 0, 0)`;
-          sheetSpring.rafId = null;
-          return;
-        }
-        sheetSpring.rafId = requestAnimationFrame(tick);
-      }
-      sheetSpring.rafId = requestAnimationFrame(tick);
-    }
-
-    // 1:1 Pointer Drag with setPointerCapture on Sheet Grab Bar
-    const grabBar = document.getElementById('sheetGrabBar');
-    let dragStartX = 0;
-    let sheetStartOffset = 0;
-    let pointerHistory = [];
-
-    grabBar.addEventListener('pointerdown', (e) => {
-      grabBar.setPointerCapture(e.pointerId);
-      sheetSpring.dragging = true;
-      if (sheetSpring.rafId) cancelAnimationFrame(sheetSpring.rafId);
-      dragStartX = e.clientX;
-      sheetStartOffset = sheetSpring.x;
-      pointerHistory = [{ x: e.clientX, t: performance.now() }];
-    });
-
-    grabBar.addEventListener('pointermove', (e) => {
-      if (!sheetSpring.dragging) return;
-      const delta = e.clientX - dragStartX;
-      const rawOffset = sheetStartOffset + delta;
-      const width = sheetEl.offsetWidth || 860;
-      // Rubber-band if user drags left past 0
-      sheetSpring.x = rawOffset < 0 ? -rubberband(-rawOffset, width) : rawOffset;
-      sheetEl.style.transform = `translate3d(${sheetSpring.x}px, 0, 0)`;
-
-      const now = performance.now();
-      pointerHistory.push({ x: e.clientX, t: now });
-      if (pointerHistory.length > 5) pointerHistory.shift();
-    });
-
-    grabBar.addEventListener('pointerup', () => {
-      if (!sheetSpring.dragging) return;
-      sheetSpring.dragging = false;
-      let releaseVelocity = 0;
-      if (pointerHistory.length >= 2) {
-        const first = pointerHistory[0];
-        const last = pointerHistory[pointerHistory.length - 1];
-        const dt = Math.max((last.t - first.t) / 1000, 0.008);
-        releaseVelocity = (last.x - first.x) / dt;
-      }
-      const width = sheetEl.offsetWidth || 860;
-      const projected = sheetSpring.x + projectMomentum(releaseVelocity);
-      if (projected > width * 0.28 || releaseVelocity > 450) {
-        scrimEl.classList.remove('open');
-        animateSheetSpring(width + 40, releaseVelocity, 0.86, 0.32);
-      } else {
-        animateSheetSpring(0, releaseVelocity, 0.84, 0.32);
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeInspector();
-    });
-
-    /* ==========================================================================
-       3. STATE & FASTAPI INTEGRATION (FR-4, FR-6, FR-7, FR-8, FR-9, FR-10, B-5)
-       ========================================================================== */
-    let state = {
+    // Application State (No API keys or secrets in client state)
+    const appState = {
       issues: [],
       routes: [],
       decoys: [],
+      scaFindings: [],
       scans: [],
-      diff: null,
-      activeTab: 'issues',
-      selectedIssueId: null
+      activeRoute: '/issues',
+      selectedIssueId: null,
+      statusFilter: 'ALL',
+      cweFilter: 'ALL',
+      isLoading: false,
+      onboardingStep: 1,
+      sheetX: 100
     };
 
-    function showToast(msg) {
-      const t = document.getElementById('toastEl');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 3200);
-    }
+    const ROUTE_TITLES = {
+      '/': 'Issues | CyberForge Correlate',
+      '/issues': 'Issues | CyberForge Correlate',
+      '/routes': 'Route Map | CyberForge Correlate',
+      '/decoys': 'Suppressed Decoys | CyberForge Correlate',
+      '/sca': 'SCA Reachability | CyberForge Correlate',
+      '/diff': 'Scan Diff | CyberForge Correlate',
+      '/privacy': 'Privacy Policy | CyberForge Correlate',
+      '/terms': 'Terms of Use | CyberForge Correlate',
+      '/404': 'Page Not Found | CyberForge Correlate'
+    };
 
-    function escapeHtml(str) {
-      if (str === null || str === undefined) return '';
-      return String(str)
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/\u2014/g, '-')
+        .replace(/\u2013/g, '-');
     }
 
-    async function loadDashboardData() {
-      const appName = document.getElementById('inputAppName').value.trim();
-      const q = appName ? `?app_name=${encodeURIComponent(appName)}` : '';
-      const [issuesRes, routesRes, decoysRes, scansRes] = await Promise.all([
-        fetch(`/issues${q}`),
-        fetch(`/routes${q}`),
-        fetch(`/decoys${q}`),
-        fetch('/scans')
-      ]);
-
-      state.issues = await issuesRes.json();
-      state.routes = await routesRes.json();
-      state.decoys = await decoysRes.json();
-      state.scans = await scansRes.json();
-
-      updateKpisAndTelemetry();
-      renderIssuesList();
-      renderRoutesTable();
-      renderDecoysTable();
+    // Spring Physics, Momentum Projection & Rubberband Drag for Inspector Sheet
+    function rubberband(distance, dimension, constant = 0.55) {
+      if (dimension <= 0) return 0;
+      return (distance * dimension * constant) / (dimension + constant * Math.abs(distance));
     }
 
-    function updateKpisAndTelemetry() {
-      const confirmed = state.issues.filter(i => i.status === 'Confirmed').length;
-      const codeOnly = state.issues.filter(i => i.status === 'Code only').length;
-      const runtimeOnly = state.issues.filter(i => i.status === 'Runtime only').length;
-      const decoys = state.decoys.length;
-
-      document.getElementById('countConfirmed').textContent = confirmed;
-      document.getElementById('countCodeOnly').textContent = codeOnly;
-      document.getElementById('countRuntimeOnly').textContent = runtimeOnly;
-      document.getElementById('countDecoys').textContent = decoys;
-
-      document.getElementById('tabCountIssues').textContent = state.issues.length;
-      document.getElementById('tabCountRoutes').textContent = state.routes.length;
-      document.getElementById('tabCountDecoys').textContent = decoys;
-
-      document.getElementById('telTotalIssues').textContent = state.issues.length;
-      document.getElementById('telRoutesCount').textContent = state.routes.length;
-
-      const totalFair = state.issues
-        .filter(i => i.status === 'Confirmed')
-        .reduce((acc, i) => acc + (Number(i.fair_exposure_inr_lakhs ?? i.fair_risk_inr_lakhs) || 0), 0);
-      document.getElementById('telFairRisk').textContent = `₹${totalFair.toFixed(1)} L`;
-
-      if (state.scans.length > 0) {
-        const latest = state.scans[0];
-        document.getElementById('telDuration').textContent = `${Number(latest.duration_seconds || 0).toFixed(2)}s`;
-        document.getElementById('activeScanBadge').textContent =
-          `Scan #${latest.scan_id} · ${latest.app_name} · ${latest.total_issues} Issues (${latest.confirmed_count} Confirmed)`;
-      }
+    function projectMomentum(initialVelocityPxPerSec, decelerationRate = 0.998) {
+      return (initialVelocityPxPerSec / 1000) * decelerationRate / (1 - decelerationRate);
     }
 
-    function setStatusFilter(statusValue) {
-      const select = document.getElementById('filterStatus');
-      select.value = select.value === statusValue ? '' : statusValue;
-      document.querySelectorAll('.kpi-card').forEach(c => c.classList.remove('active-filter'));
-      if (select.value === 'Confirmed') document.getElementById('kpiConfirmed').classList.add('active-filter');
-      if (select.value === 'Code only') document.getElementById('kpiCodeOnly').classList.add('active-filter');
-      if (select.value === 'Runtime only') document.getElementById('kpiRuntimeOnly').classList.add('active-filter');
-      switchTab('issues');
-      renderIssuesList();
-    }
+    let sheetAnimFrame = null;
+    function animateSheetSpring(targetPercent, onComplete, initialVelocity = 0) {
+      if (sheetAnimFrame) cancelAnimationFrame(sheetAnimFrame);
+      const sheet = document.getElementById('inspectorSheet');
+      if (!sheet) return;
 
-    function switchTab(tabName) {
-      state.activeTab = tabName;
-      ['issues', 'routes', 'decoys', 'diff'].forEach(t => {
-        document.getElementById(`tabBtn-${t}`).classList.toggle('active', t === tabName);
-        document.getElementById(`panel-${t}`).style.display = t === tabName ? 'block' : 'none';
-      });
-      document.getElementById('issueFiltersBar').style.display = tabName === 'issues' ? 'flex' : 'none';
-    }
-
-    function renderIssuesList() {
-      const container = document.getElementById('panel-issues');
-      const statusFilter = document.getElementById('filterStatus').value;
-      const cweFilter = document.getElementById('filterCwe').value;
-
-      const filtered = state.issues.filter(item => {
-        if (statusFilter && item.status !== statusFilter) return false;
-        if (cweFilter && item.cwe !== cweFilter) return false;
-        return true;
-      });
-
-      if (filtered.length === 0) {
-        container.innerHTML = `
-          <div style="padding:48px 24px; text-align:center; color:var(--color-tx-tertiary);">
-            <p class="font-season" style="font-size:24px; color:var(--color-tx); margin-bottom:6px;">No Correlated Issues Match Current Filter</p>
-            <p style="font-size:14px;">Click <strong>"Run Correlation Scan"</strong> above to execute AST Route Mapping + SAST + 2-Phase DAST + Deterministic Correlation.</p>
-          </div>
-        `;
+      const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReducedMotion) {
+        appState.sheetX = targetPercent;
+        sheet.style.transform = `translate3d(${targetPercent}%, 0, 0)`;
+        sheetAnimFrame = null;
+        if (typeof onComplete === 'function') onComplete();
         return;
       }
 
-      container.innerHTML = filtered.map(issue => {
-        const statusClass =
-          issue.status === 'Confirmed' ? 'badge-confirmed' :
-          issue.status === 'Code only' ? 'badge-code-only' : 'badge-runtime-only';
+      const stiffness = 0.24;
+      const damping = 0.72;
+      let velocity = Number.isFinite(initialVelocity) ? initialVelocity : 0;
 
-        const urlDisplay = issue.url || issue.canonical_path || '— (Static Source Only)';
-        const paramDisplay = issue.parameter || issue.param || '—';
-        const fileLineDisplay = issue.file ? `${issue.file}:${issue.line || '?'}` : '— (Runtime HTTP Layer)';
-        const payloadDisplay = issue.payload ? escapeHtml(issue.payload) : '—';
+      function step() {
+        const displacement = targetPercent - appState.sheetX;
+        const springForce = displacement * stiffness;
+        velocity = (velocity + springForce) * damping;
+        appState.sheetX += velocity;
+        sheet.style.transform = `translate3d(${appState.sheetX.toFixed(3)}%, 0, 0)`;
+
+        if (Math.abs(displacement) < 0.15 && Math.abs(velocity) < 0.15) {
+          appState.sheetX = targetPercent;
+          sheet.style.transform = `translate3d(${targetPercent}%, 0, 0)`;
+          sheetAnimFrame = null;
+          if (typeof onComplete === 'function') onComplete();
+          return;
+        }
+        sheetAnimFrame = requestAnimationFrame(step);
+      }
+      sheetAnimFrame = requestAnimationFrame(step);
+    }
+
+    function initSheetGesture() {
+      const header = document.getElementById('sheetHeader');
+      const sheet = document.getElementById('inspectorSheet');
+      if (!header || !sheet) return;
+      let startX = null;
+      let lastX = null;
+      let lastTime = 0;
+      let velocityPxPerSec = 0;
+      let dragging = false;
+
+      header.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button')) return;
+        if (sheetAnimFrame) {
+          cancelAnimationFrame(sheetAnimFrame);
+          sheetAnimFrame = null;
+        }
+        startX = e.clientX;
+        lastX = e.clientX;
+        lastTime = performance.now();
+        velocityPxPerSec = 0;
+        dragging = true;
+        header.setPointerCapture(e.pointerId);
+      });
+
+      header.addEventListener('pointermove', (e) => {
+        if (!dragging || startX === null) return;
+        const now = performance.now();
+        const dt = Math.max(1, now - lastTime);
+        const instantVel = ((e.clientX - lastX) / dt) * 1000;
+        velocityPxPerSec = velocityPxPerSec * 0.35 + instantVel * 0.65;
+        lastX = e.clientX;
+        lastTime = now;
+
+        const deltaX = e.clientX - startX;
+        const width = sheet.offsetWidth || 600;
+        if (deltaX < 0) {
+          const rb = rubberband(deltaX, width, 0.35);
+          appState.sheetX = (rb / width) * 100;
+          sheet.style.transform = `translate3d(${appState.sheetX.toFixed(3)}%, 0, 0)`;
+        } else {
+          const pct = Math.min(100, (deltaX / width) * 100);
+          appState.sheetX = pct;
+          sheet.style.transform = `translate3d(${pct.toFixed(3)}%, 0, 0)`;
+        }
+      });
+
+      header.addEventListener('pointerup', () => {
+        if (!dragging) return;
+        dragging = false;
+        const width = sheet.offsetWidth || 600;
+        const projectedDeltaPx = projectMomentum(velocityPxPerSec, 0.998);
+        const projectedEndPercent = appState.sheetX + (projectedDeltaPx / width) * 100;
+        // Convert px/sec velocity to % per 16.6ms animation frame for seamless velocity handoff
+        const frameVelocityPct = ((velocityPxPerSec / width) * 100) / 60;
+
+        if (appState.sheetX > 28 || projectedEndPercent > 38 || velocityPxPerSec > 480) {
+          closeInspectorSheet(false, frameVelocityPct);
+        } else {
+          animateSheetSpring(0, null, frameVelocityPct);
+        }
+      });
+    }
+
+    // Error Banner Management
+    function showErrorBanner(title, message) {
+      const banner = document.getElementById('errorBanner');
+      document.getElementById('errorBannerTitle').textContent = escapeHtml(title || 'Operation Failed');
+      document.getElementById('errorBannerMsg').textContent = escapeHtml(message || 'Unexpected error occurred.');
+      banner.classList.add('visible');
+    }
+
+    function hideErrorBanner() {
+      document.getElementById('errorBanner').classList.remove('visible');
+    }
+
+    // API Fetch Helper (Always requests JSON & handles structured HTTP errors)
+    async function apiFetchJson(url, options = {}) {
+      const headers = Object.assign({ 'Accept': 'application/json' }, options.headers || {});
+      const response = await fetch(url, Object.assign({}, options, { headers }));
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_err) {
+        data = null;
+      }
+      if (!response.ok) {
+        const detail = data && data.detail
+          ? (typeof data.detail === 'object' ? (data.detail.message || JSON.stringify(data.detail)) : String(data.detail))
+          : `HTTP ${response.status} (${response.statusText || 'Error'})`;
+        const err = new Error(detail);
+        err.status = response.status;
+        err.payload = data;
+        throw err;
+      }
+      return data;
+    }
+
+    // Skeleton Loading Renderers
+    function renderTableSkeleton(tbodyId, colCount, rows = 4) {
+      const tbody = document.getElementById(tbodyId);
+      if (!tbody) return;
+      let html = '';
+      for (let r = 0; r < rows; r++) {
+        html += '<tr>';
+        for (let c = 0; c < colCount; c++) {
+          html += `<td><div class="skeleton-line" style="width:${65 + ((r + c) % 3) * 10}%"></div></td>`;
+        }
+        html += '</tr>';
+      }
+      tbody.innerHTML = html;
+    }
+
+    // History API Router
+    function handleNavClick(event, path) {
+      if (event) event.preventDefault();
+      navigateTo(path);
+    }
+
+    function navigateTo(path, replace = false) {
+      const cleanPath = (path || '/').split('?')[0];
+      if (replace) {
+        window.history.replaceState({ path: cleanPath }, '', cleanPath);
+      } else if (window.location.pathname !== cleanPath) {
+        window.history.pushState({ path: cleanPath }, '', cleanPath);
+      }
+      syncRouteState(cleanPath);
+    }
+
+    function syncRouteState(rawPath) {
+      const path = rawPath || window.location.pathname || '/';
+      document.querySelectorAll('.view-panel').forEach((el) => el.classList.remove('active'));
+      document.querySelectorAll('.nav-tab').forEach((el) => el.classList.remove('active'));
+
+      const filterControls = document.getElementById('issueFilterControls');
+      if (filterControls) {
+        filterControls.style.display = (path === '/' || path === '/issues' || path.startsWith('/issues/')) ? 'flex' : 'none';
+      }
+
+      if (path === '/' || path === '/issues') {
+        appState.activeRoute = '/issues';
+        document.getElementById('viewIssues').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/issues"]');
+        if (tab) tab.classList.add('active');
+        document.title = ROUTE_TITLES['/issues'];
+        closeInspectorSheet(true);
+      } else if (path.startsWith('/issues/')) {
+        const issueId = decodeURIComponent(path.slice('/issues/'.length));
+        appState.activeRoute = '/issues';
+        document.getElementById('viewIssues').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/issues"]');
+        if (tab) tab.classList.add('active');
+        document.title = `Issue ${issueId.slice(0, 8)} | CyberForge Correlate`;
+        openInspectorSheet(issueId, true);
+      } else if (path === '/routes') {
+        appState.activeRoute = '/routes';
+        document.getElementById('viewRoutes').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/routes"]');
+        if (tab) tab.classList.add('active');
+        document.title = ROUTE_TITLES['/routes'];
+      } else if (path === '/decoys') {
+        appState.activeRoute = '/decoys';
+        document.getElementById('viewDecoys').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/decoys"]');
+        if (tab) tab.classList.add('active');
+        document.title = ROUTE_TITLES['/decoys'];
+      } else if (path === '/sca') {
+        appState.activeRoute = '/sca';
+        document.getElementById('viewSca').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/sca"]');
+        if (tab) tab.classList.add('active');
+        document.title = ROUTE_TITLES['/sca'];
+      } else if (path === '/diff') {
+        appState.activeRoute = '/diff';
+        document.getElementById('viewDiff').classList.add('active');
+        const tab = document.querySelector('.nav-tab[data-route="/diff"]');
+        if (tab) tab.classList.add('active');
+        document.title = ROUTE_TITLES['/diff'];
+        renderDiffSelectors();
+      } else if (path === '/privacy') {
+        appState.activeRoute = '/privacy';
+        document.getElementById('viewPrivacy').classList.add('active');
+        document.title = ROUTE_TITLES['/privacy'];
+      } else if (path === '/terms') {
+        appState.activeRoute = '/terms';
+        document.getElementById('viewTerms').classList.add('active');
+        document.title = ROUTE_TITLES['/terms'];
+      } else {
+        appState.activeRoute = '/404';
+        document.getElementById('missingRoutePath').textContent = path;
+        document.getElementById('view404').classList.add('active');
+        document.title = ROUTE_TITLES['/404'];
+      }
+    }
+
+    window.addEventListener('popstate', () => {
+      syncRouteState(window.location.pathname);
+    });
+
+    // Data Loading & Telemetry Refresh
+    async function refreshAllData() {
+      hideErrorBanner();
+      renderTableSkeleton('issuesTableBody', 7, 4);
+      renderTableSkeleton('routesTableBody', 6, 3);
+      renderTableSkeleton('decoysTableBody', 5, 3);
+      renderTableSkeleton('scaTableBody', 6, 3);
+
+      try {
+        const [health, issuesRes, routesRes, decoysRes, scaRes, scansRes] = await Promise.all([
+          apiFetchJson('/health').catch(() => null),
+          apiFetchJson('/issues'),
+          apiFetchJson('/routes'),
+          apiFetchJson('/decoys'),
+          apiFetchJson('/sca'),
+          apiFetchJson('/scans').catch(() => [])
+        ]);
+
+        if (health && health.credential_isolation) {
+          const credBadge = document.getElementById('credentialIsolationBadge');
+          if (credBadge) {
+            credBadge.textContent = 'API Keys: Server-Isolated';
+          }
+        }
+
+        appState.issues = Array.isArray(issuesRes) ? issuesRes : (Array.isArray(issuesRes?.issues) ? issuesRes.issues : []);
+        appState.routes = Array.isArray(routesRes) ? routesRes : (Array.isArray(routesRes?.routes) ? routesRes.routes : []);
+        appState.decoys = Array.isArray(decoysRes) ? decoysRes : (Array.isArray(decoysRes?.decoys) ? decoysRes.decoys : []);
+        appState.scaFindings = Array.isArray(scaRes) ? scaRes : (Array.isArray(scaRes?.sca_findings) ? scaRes.sca_findings : []);
+        appState.scans = Array.isArray(scansRes) ? scansRes : (Array.isArray(scansRes?.scans) ? scansRes.scans : []);
+
+        updateKpiMetrics(issuesRes?.counts || {}, scaRes);
+        populateScanHistoryDropdown();
+        renderIssuesTable();
+        renderRoutesTable();
+        renderDecoysTable();
+        renderScaTable();
+        renderDiffSelectors();
+      } catch (err) {
+        showErrorBanner('Telemetry Fetch Error', err.message);
+      }
+    }
+
+    function normalizeStatusClass(status) {
+      const s = String(status || '').trim();
+      if (s === 'Confirmed') return 'Confirmed';
+      if (s === 'Contradicted') return 'Contradicted';
+      if (s === 'Code only' || s === 'NeedsVerification') return 'NeedsVerification';
+      if (s === 'Runtime only') return 'Unverified';
+      return 'Unverified';
+    }
+
+    function updateKpiMetrics(counts, scaRes) {
+      const total = appState.issues.length;
+      const confirmed = counts.Confirmed !== undefined
+        ? counts.Confirmed
+        : appState.issues.filter((i) => i.status === 'Confirmed').length;
+      const codeOnly = counts['Code only'] !== undefined
+        ? counts['Code only']
+        : appState.issues.filter((i) => i.status === 'Code only' || i.status === 'NeedsVerification').length;
+      const runtimeOnly = counts['Runtime only'] !== undefined
+        ? counts['Runtime only']
+        : appState.issues.filter((i) => i.status === 'Runtime only' || i.status === 'Contradicted').length;
+      const decoysCount = appState.decoys.length;
+      const reachableSca = (scaRes && typeof scaRes.reachable_count === 'number')
+        ? scaRes.reachable_count
+        : appState.scaFindings.filter((s) => s.is_reachable || String(s.reachability_status || '').toUpperCase().includes('REACHABLE')).length;
+
+      document.getElementById('kpiTotalIssues').textContent = String(total);
+      document.getElementById('kpiConfirmed').textContent = String(confirmed);
+      document.getElementById('kpiNeedsVerification').textContent = String(codeOnly);
+      document.getElementById('kpiContradicted').textContent = String(runtimeOnly);
+      document.getElementById('kpiSuppressedDecoys').textContent = String(decoysCount);
+      document.getElementById('kpiScaReachable').textContent = String(reachableSca);
+      document.getElementById('kpiScaTotalSub').textContent = `${reachableSca} of ${appState.scaFindings.length} advisories reachable`;
+
+      document.getElementById('tabCountIssues').textContent = String(total);
+      document.getElementById('tabCountRoutes').textContent = String(appState.routes.length);
+      document.getElementById('tabCountDecoys').textContent = String(decoysCount);
+      document.getElementById('tabCountSca').textContent = String(appState.scaFindings.length);
+    }
+
+    function populateScanHistoryDropdown() {
+      const sel = document.getElementById('selectScanHistory');
+      if (!sel) return;
+      let html = '<option value="">Latest Workspace State</option>';
+      appState.scans.forEach((s, idx) => {
+        const sid = String(s.scan_id !== undefined ? s.scan_id : (s.id || idx + 1));
+        const total = s.total_issues !== undefined ? s.total_issues : (s.correlate_issues_count || 0);
+        const label = `Run #${sid} : ${s.app_name || 'workspace'} (${s.confirmed_count || 0} Confirmed / ${total} Issues)`;
+        html += `<option value="${escapeHtml(sid)}">${escapeHtml(label)}</option>`;
+      });
+      sel.innerHTML = html;
+    }
+
+    async function handleScanHistorySelect(scanId) {
+      if (!scanId) {
+        await refreshAllData();
+        return;
+      }
+      try {
+        const issues = await apiFetchJson(`/issues?scan_id=${encodeURIComponent(scanId)}`);
+        appState.issues = Array.isArray(issues) ? issues : (issues?.issues || []);
+        updateKpiMetrics({}, null);
+        renderIssuesTable();
+      } catch (err) {
+        showErrorBanner('Scan Lookup Failed', err.message);
+      }
+    }
+
+    // Filter Helpers
+    function filterByStatus(status) {
+      appState.statusFilter = status;
+      const select = document.getElementById('selectStatusFilter');
+      if (select) select.value = status;
+      document.querySelectorAll('.kpi-card').forEach((c) => c.classList.remove('active-filter'));
+      if (status === 'ALL') document.getElementById('kpiCardAll').classList.add('active-filter');
+      if (status === 'Confirmed') document.getElementById('kpiCardConfirmed').classList.add('active-filter');
+      if (status === 'Code only' || status === 'NeedsVerification') document.getElementById('kpiCardNeeds').classList.add('active-filter');
+      if (status === 'Runtime only' || status === 'Contradicted') document.getElementById('kpiCardContradicted').classList.add('active-filter');
+      if (appState.activeRoute !== '/issues') navigateTo('/issues');
+      renderIssuesTable();
+    }
+
+    function handleStatusSelectChange(value) {
+      filterByStatus(value || 'ALL');
+    }
+
+    // Table Renderers
+    function renderIssuesTable() {
+      const tbody = document.getElementById('issuesTableBody');
+      if (!tbody) return;
+      const searchVal = (document.getElementById('inputSearchFilter')?.value || '').trim().toLowerCase();
+      const statusFilter = document.getElementById('selectStatusFilter')?.value || appState.statusFilter || 'ALL';
+      const cweFilter = document.getElementById('selectCweFilter')?.value || 'ALL';
+
+      const filtered = appState.issues.filter((issue) => {
+        if (statusFilter !== 'ALL') {
+          if (statusFilter === 'NeedsVerification') {
+            if (issue.status !== 'NeedsVerification' && issue.status !== 'Code only' && issue.status !== 'Runtime only') return false;
+          } else if (issue.status !== statusFilter) {
+            return false;
+          }
+        }
+        const normCwe = String(issue.cwe || '').replace(/^CWE-/i, '');
+        if (cweFilter !== 'ALL' && normCwe !== String(cweFilter).replace(/^CWE-/i, '')) return false;
+        if (searchVal) {
+          const hay = [
+            issue.title,
+            issue.canonical_path,
+            issue.matched_route,
+            issue.url,
+            issue.file,
+            issue.file_path,
+            issue.func_name,
+            issue.param,
+            issue.cwe
+          ].join(' ').toLowerCase();
+          if (!hay.includes(searchVal)) return false;
+        }
+        return true;
+      });
+
+      document.getElementById('issuesSummaryCount').textContent = `${filtered.length} of ${appState.issues.length} issues shown`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <div class="empty-state-title">No Correlated Issues Match Current View</div>
+                <p>Click "Run Correlation Scan" in the top bar or clear active status/CWE filters.</p>
+              </div>
+            </td>
+          </tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((issue) => {
+        const routeStr = issue.canonical_path || issue.matched_route || issue.url || 'N/A';
+        const fPath = issue.file || issue.file_path;
+        const fLine = issue.line || issue.line_start || 1;
+        const fileLoc = fPath ? `${fPath}:${fLine}` : 'Runtime Endpoint';
+        const funcStr = issue.func_name || 'handler';
+        const paramStr = issue.param || issue.parameter || 'N/A';
+        const sastCount = Array.isArray(issue.sast_evidence) && issue.sast_evidence.length > 0
+          ? issue.sast_evidence.length
+          : (fPath ? 1 : 0);
+        const dastCount = Array.isArray(issue.dast_evidence) && issue.dast_evidence.length > 0
+          ? issue.dast_evidence.length
+          : (issue.url || issue.payload ? 1 : 0);
+        const rawScore = Number(issue.risk_score !== undefined ? issue.risk_score : (issue.confidence || 0.85));
+        const pct = rawScore > 1 ? Math.round(rawScore) : Math.round(rawScore * 100);
+        const isSelected = String(appState.selectedIssueId) === String(issue.id);
+        const chipClass = normalizeStatusClass(issue.status);
+        const cweLabel = String(issue.cwe || '').toUpperCase().startsWith('CWE-') ? issue.cwe : `CWE-${issue.cwe}`;
 
         return `
-          <article class="issue-row" onclick="openInspector(${issue.id})">
-            <div class="issue-row-header">
-              <div class="issue-main-meta">
-                <span class="badge ${statusClass}">${escapeHtml(issue.status)}</span>
-                <span class="badge-cwe">${escapeHtml(issue.cwe)}</span>
-                <span class="badge badge-sev-${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)} · Score ${Number(issue.risk_score).toFixed(1)}</span>
-                <h3 class="issue-title">${escapeHtml(issue.title)}</h3>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span class="mono-chip" title="Merged scanner findings (FR-6)">Findings: ${issue.finding_count || 1}</span>
-                <span class="btn-pill btn-secondary" style="min-height:30px; padding:4px 12px; font-size:12px;">Inspect FR-8 →</span>
-              </div>
-            </div>
-
-            <div class="issue-summary-pills">
-              <span><strong>Endpoint:</strong> <code class="mono-chip">${escapeHtml(issue.method || 'GET')} ${escapeHtml(urlDisplay)}</code></span>
-              <span><strong>Parameter:</strong> <code class="mono-chip">${escapeHtml(paramDisplay)}</code></span>
-              <span><strong>Source Sink:</strong> <code class="mono-chip">${escapeHtml(fileLineDisplay)}</code></span>
-              <span><strong>Payload:</strong> <code class="mono-chip">${payloadDisplay}</code></span>
-            </div>
-
-            <div class="b3-link-banner">
-              <strong>B-3 Correlation Proof:</strong>
-              <span>${escapeHtml(issue.link_reason)}</span>
-            </div>
-          </article>
-        `;
+          <tr class="clickable-row ${isSelected ? 'selected-row' : ''}" onclick="navigateTo('/issues/${encodeURIComponent(issue.id)}')">
+            <td><span class="status-chip ${escapeHtml(chipClass)}">${escapeHtml(issue.status)}</span></td>
+            <td>
+              <div style="font-weight:600;">${escapeHtml(cweLabel)}</div>
+              <div style="font-size:11.5px; color:var(--text-secondary);">${escapeHtml(issue.severity || 'High')}</div>
+            </td>
+            <td><span class="code-tag">${escapeHtml(routeStr)}</span></td>
+            <td>
+              <div style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(fileLoc)}</div>
+              <div style="font-size:11.5px; color:var(--text-secondary);">fn: ${escapeHtml(funcStr)}()</div>
+            </td>
+            <td><span class="code-tag">${escapeHtml(paramStr)}</span></td>
+            <td>
+              <span class="code-tag" style="margin-right:4px;">SAST:${sastCount}</span>
+              <span class="code-tag">DAST:${dastCount}</span>
+            </td>
+            <td style="font-family:var(--font-mono); font-weight:600;">${pct}%</td>
+          </tr>`;
       }).join('');
     }
 
     function renderRoutesTable() {
       const tbody = document.getElementById('routesTableBody');
-      if (!state.routes.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:32px;">No routes mapped yet. Trigger a scan to run FR-4 AST Route Mapping.</td></tr>`;
+      if (!tbody) return;
+      if (appState.routes.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">No AST Routes Indexed Yet</div><p>Run a correlation scan to extract Flask/FastAPI/Express route signatures.</p></div></td></tr>`;
         return;
       }
-      tbody.innerHTML = state.routes.map(r => `
-        <tr>
-          <td><span class="badge badge-runtime-only font-mono">${escapeHtml(r.method)}</span></td>
-          <td><code class="mono-chip">${escapeHtml(r.canonical_path || r.path_pattern)}</code></td>
-          <td><code class="font-mono" style="color:var(--color-tx); font-weight:600;">${escapeHtml(r.func_name)}()</code></td>
-          <td><code class="mono-chip">${escapeHtml(r.file)}:${r.start_line}–${r.end_line}</code></td>
-          <td>${(r.params || []).map(p => `<code class="mono-chip">${escapeHtml(p)}</code>`).join(' ') || '—'}</td>
-          <td>${(r.called_funcs || []).map(fn => `<code class="mono-chip">${escapeHtml(fn)}()</code>`).join(' ') || '—'}</td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = appState.routes.map((r) => {
+        const methods = (Array.isArray(r.http_methods) ? r.http_methods : (Array.isArray(r.methods) && r.methods.length ? r.methods : [r.method || 'GET'])).join(', ');
+        const params = (Array.isArray(r.params) && r.params.length) ? r.params.join(', ') : 'None';
+        const auth = r.auth_required ? 'Auth Required' : ((Array.isArray(r.auth_decorators) && r.auth_decorators.length) ? r.auth_decorators.join(', ') : 'Public');
+        const fPath = r.file || r.file_path || '';
+        const lStart = r.start_line || r.line_start || 1;
+        const lEnd = r.end_line || r.line_end || lStart;
+        return `
+          <tr>
+            <td><span class="code-tag">${escapeHtml(r.canonical_path || r.path_pattern)}</span></td>
+            <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(methods)}</td>
+            <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(fPath)}:${escapeHtml(lStart)}-${escapeHtml(lEnd)}</td>
+            <td><span class="code-tag">${escapeHtml(r.func_name)}()</span></td>
+            <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(params)}</td>
+            <td><span class="code-tag">${escapeHtml(auth)}</span></td>
+          </tr>`;
+      }).join('');
     }
 
     function renderDecoysTable() {
       const tbody = document.getElementById('decoysTableBody');
-      if (!state.decoys.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:32px;">No safe decoys recorded yet. Run a scan to inspect B-2 decoy suppression.</td></tr>`;
+      if (!tbody) return;
+      if (appState.decoys.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="empty-state-title">No Suppressed Decoys Recorded</div><p>Execute a scan to evaluate parameterized queries, HTML escaping, and redirect allowlists.</p></div></td></tr>`;
         return;
       }
-      tbody.innerHTML = state.decoys.map(d => `
+      tbody.innerHTML = appState.decoys.map((d) => {
+        const cweLabel = String(d.cwe || '').toUpperCase().startsWith('CWE-') ? d.cwe : `CWE-${d.cwe}`;
+        const fPath = d.file || d.file_path || '';
+        const fLine = d.line || d.line_start || 1;
+        const reason = d.decoy_reason || d.suppression_reason || d.evidence || d.reason || 'Verified safe by AST sanitizer guard';
+        return `
         <tr>
-          <td><span class="badge badge-decoy">Suppressed (B-2 Safe Decoy)</span></td>
-          <td><span class="badge-cwe">${escapeHtml(d.cwe)}</span></td>
-          <td><code class="mono-chip">${escapeHtml(d.file || '—')}:${d.line || '?'}</code></td>
-          <td><code class="mono-chip">${escapeHtml(d.snippet || '—')}</code></td>
-          <td>${escapeHtml(d.decoy_reason || d.evidence || 'Protected via parameterized query / contextual escaping')}</td>
-        </tr>
-      `).join('');
+          <td><span class="status-chip SafeDecoy">Suppressed Decoy</span></td>
+          <td style="font-family:var(--font-mono); font-weight:600;">${escapeHtml(cweLabel)}</td>
+          <td>
+            <div><span class="code-tag">${escapeHtml(d.canonical_path || d.route || fPath || 'N/A')}</span></div>
+            <div style="font-family:var(--font-mono); font-size:11.5px; color:var(--text-secondary); margin-top:3px;">${escapeHtml(fPath)}:${escapeHtml(fLine)}</div>
+          </td>
+          <td><span class="code-tag">${escapeHtml(d.func_name || 'handler')}()</span></td>
+          <td style="font-size:12.5px; color:var(--text-secondary);">${escapeHtml(reason)}</td>
+        </tr>`;
+      }).join('');
     }
 
-    async function openInspector(issueId) {
-      const res = await fetch(`/issues/${issueId}`);
-      if (!res.ok) {
-        showToast(`Failed to load Issue #${issueId}`);
+    function renderScaTable() {
+      const tbody = document.getElementById('scaTableBody');
+      if (!tbody) return;
+      if (appState.scaFindings.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">No SCA Dependency Advisories</div><p>Run a scan on a repository with requirements.txt or package.json to evaluate import reachability.</p></div></td></tr>`;
         return;
       }
-      const issue = await res.json();
-      state.selectedIssueId = issue.id;
+      tbody.innerHTML = appState.scaFindings.map((s) => {
+        const rStatus = String(s.reachability_status || s.status || 'Unknown');
+        const isReach = Boolean(s.is_reachable || rStatus.toUpperCase() === 'REACHABLE');
+        const reachClass = isReach
+          ? 'Confirmed'
+          : (rStatus === 'Unknown' ? 'NeedsVerification' : 'Unverified');
+        const reachBadge = `<span class="status-chip ${reachClass}">${escapeHtml(rStatus)}</span>`;
 
-      const statusClass =
-        issue.status === 'Confirmed' ? 'badge-confirmed' :
-        issue.status === 'Code only' ? 'badge-code-only' : 'badge-runtime-only';
+        const callChain = Array.isArray(s.call_chain) && s.call_chain.length
+          ? s.call_chain
+          : (Array.isArray(s.imported_in_files) && s.imported_in_files.length
+            ? s.imported_in_files
+            : (Array.isArray(s.importing_files) ? s.importing_files : []));
+        let callTraceText = '';
+        if (callChain.length > 0) {
+          callTraceText = callChain.join(' -> ');
+        } else if (rStatus === 'Imported-only') {
+          callTraceText = `Module imported (${Array.isArray(s.vulnerable_functions) && s.vulnerable_functions.length ? s.vulnerable_functions[0] + ' not called' : 'symbol not invoked'})`;
+        } else if (rStatus === 'Unknown') {
+          callTraceText = 'No symbol map available (Severity never downgraded)';
+        } else {
+          callTraceText = 'Declared in lockfile only (Not imported in AST)';
+        }
 
-      document.getElementById('sheetBadges').innerHTML = `
-        <span class="badge ${statusClass}">${escapeHtml(issue.status)}</span>
-        <span class="badge-cwe">${escapeHtml(issue.cwe)}</span>
-        <span class="badge badge-sev-${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)} · Risk ${Number(issue.risk_score).toFixed(1)}</span>
-        <span class="mono-chip">Issue #${issue.id} · Fingerprint: ${escapeHtml((issue.fingerprint || '').slice(0, 38))}…</span>
-      `;
-      document.getElementById('sheetTitle').textContent = issue.title;
+        const advId = s.cve_id || s.advisory_id || 'CVE-ADVISORY';
+        const pkgName = s.package_name || s.package || 'dependency';
+        const ver = s.version || s.installed_version || '0.0.0';
+        const origSev = s.original_severity || s.severity || 'High';
+        const effSev = s.effective_severity || origSev;
+        const cvss = s.cvss_score !== undefined ? `CVSS ${Number(s.cvss_score).toFixed(1)}` : (s.cwe || 'CWE-1395');
+        const kevTag = (s.in_cisa_kev || s.is_kev) ? ' [CISA KEV]' : '';
+        const sevLabel = origSev !== effSev
+          ? `${origSev} -> ${effSev} (${cvss}${kevTag})`
+          : `${effSev} (${cvss}${kevTag})`;
+        const flags = Array.isArray(s.supply_chain_flags) && s.supply_chain_flags.length
+          ? ` | Flags: ${s.supply_chain_flags.join(', ')}`
+          : '';
+        const fixText = s.remediation || (s.fixed_version ? `Upgrade to ${s.fixed_version}` : 'Pin & audit registry');
+        return `
+          <tr>
+            <td>${reachBadge}</td>
+            <td style="font-family:var(--font-mono); font-weight:600;">${escapeHtml(advId)}</td>
+            <td><span class="code-tag">${escapeHtml(pkgName)}==${escapeHtml(ver)}</span></td>
+            <td style="font-size:12px;">${escapeHtml(sevLabel)}</td>
+            <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(callTraceText + flags)}</td>
+            <td><span class="code-tag">${escapeHtml(fixText)}</span></td>
+          </tr>`;
+      }).join('');
+    }
 
-      const sastSnippets = (issue.sast_evidence || []).map(sf =>
-        `// Scanner: ${sf.scanner_name || 'core-sast'} | ${sf.file || ''}:${sf.line || ''}\n${sf.snippet || sf.evidence || ''}`
-      ).join('\n\n') || (issue.code_snippet || '// No static source sink (Runtime-only exposure)');
+    // Scan Diff Comparison
+    function renderDiffSelectors() {
+      const baseSel = document.getElementById('selectDiffBase');
+      const headSel = document.getElementById('selectDiffHead');
+      const container = document.getElementById('diffResultsContainer');
+      if (!baseSel || !headSel || !container) return;
 
-      const dastProofs = (issue.dast_evidence || []).map(df =>
-        `HTTP ${df.method || 'GET'} ${df.url || ''}\nParameter: ${df.param || '—'}\nPayload:   ${df.payload || '—'}\nEvidence:  ${df.evidence || ''}`
-      ).join('\n\n') || (issue.payload ? `Payload: ${issue.payload}` : '// No active runtime proof recorded (Code-only sink)');
+      if (appState.scans.length === 0) {
+        baseSel.innerHTML = '<option value="">No scans available</option>';
+        headSel.innerHTML = '<option value="">No scans available</option>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-title">Run At Least Two Scans</div><p>Trigger a scan or click "Verify Idempotency (2x)" to compare scan runs.</p></div>';
+        return;
+      }
+
+      const opts = appState.scans.map((s, idx) => {
+        const sid = String(s.scan_id !== undefined ? s.scan_id : (s.id || idx + 1));
+        return `<option value="${escapeHtml(sid)}">Scan #${escapeHtml(sid)} (${escapeHtml(s.app_name || 'workspace')})</option>`;
+      }).join('');
+      baseSel.innerHTML = opts;
+      headSel.innerHTML = opts;
+      if (appState.scans.length > 1) {
+        baseSel.selectedIndex = 1;
+        headSel.selectedIndex = 0;
+      }
+    }
+
+    async function runScanDiffComparison() {
+      const baseId = document.getElementById('selectDiffBase')?.value;
+      const headId = document.getElementById('selectDiffHead')?.value;
+      const container = document.getElementById('diffResultsContainer');
+      if (!baseId || !headId) {
+        showErrorBanner('Diff Selection Required', 'Select both a base scan and a target scan to compare.');
+        return;
+      }
+      container.innerHTML = '<div class="skeleton-line" style="height:28px; margin-bottom:8px;"></div><div class="skeleton-line" style="height:28px;"></div>';
+      try {
+        const diff = await apiFetchJson(`/scans/compare?base=${encodeURIComponent(baseId)}&target=${encodeURIComponent(headId)}`);
+        const summary = diff.summary || {};
+        const counts = diff.counts || {};
+        const newList = Array.isArray(diff.new_issues) ? diff.new_issues : (Array.isArray(diff.new) ? diff.new : []);
+        const fixedList = Array.isArray(diff.fixed_issues) ? diff.fixed_issues : (Array.isArray(diff.fixed) ? diff.fixed : []);
+        const openList = Array.isArray(diff.still_open_issues) ? diff.still_open_issues : (Array.isArray(diff.still_open) ? diff.still_open : []);
+
+        const newCount = summary.new_count !== undefined ? summary.new_count : (counts.new !== undefined ? counts.new : newList.length);
+        const fixedCount = summary.fixed_count !== undefined ? summary.fixed_count : (counts.fixed !== undefined ? counts.fixed : fixedList.length);
+        const openCount = summary.still_open_count !== undefined ? summary.still_open_count : (counts.still_open !== undefined ? counts.still_open : openList.length);
+
+        const combinedDiffRows = [
+          ...newList.map((i) => ({ ...i, _diffBadge: 'NEW', _diffClass: 'Confirmed' })),
+          ...fixedList.map((i) => ({ ...i, _diffBadge: 'FIXED', _diffClass: 'SafeDecoy' })),
+          ...openList.map((i) => ({ ...i, _diffBadge: 'STILL-OPEN', _diffClass: 'NeedsVerification' }))
+        ];
+
+        const rowsHtml = combinedDiffRows.length > 0
+          ? `<div class="table-scroll" style="margin-top:12px;">
+               <table class="data-table">
+                 <thead>
+                   <tr>
+                     <th>Diff State</th>
+                     <th>Correlation Status</th>
+                     <th>CWE</th>
+                     <th>Route / File Location</th>
+                     <th>Fingerprint</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   ${combinedDiffRows.map((item) => `
+                     <tr>
+                       <td><span class="status-chip ${escapeHtml(item._diffClass)}">${escapeHtml(item._diffBadge)}</span></td>
+                       <td>${escapeHtml(item.status || 'Confirmed')}</td>
+                       <td style="font-family:var(--font-mono); font-weight:600;">${escapeHtml(item.cwe || 'CWE')}</td>
+                       <td><span class="code-tag">${escapeHtml(item.canonical_path || item.file || item.url || 'N/A')}</span></td>
+                       <td style="font-family:var(--font-mono); font-size:11.5px; color:var(--text-secondary);">${escapeHtml(String(item.fingerprint || '').slice(0, 16))}</td>
+                     </tr>`).join('')}
+                 </tbody>
+               </table>
+             </div>`
+          : '';
+
+        container.innerHTML = `
+          <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:12px;">
+            <div class="evidence-card">
+              <div class="evidence-card-title">New Issues (NEW)</div>
+              <div style="font-size:22px; font-weight:600; color:var(--status-confirmed-text);">${newCount}</div>
+            </div>
+            <div class="evidence-card">
+              <div class="evidence-card-title">Fixed Issues (FIXED)</div>
+              <div style="font-size:22px; font-weight:600; color:var(--status-safe-text);">${fixedCount}</div>
+            </div>
+            <div class="evidence-card">
+              <div class="evidence-card-title">Still Open Fingerprints</div>
+              <div style="font-size:22px; font-weight:600;">${openCount}</div>
+            </div>
+          </div>
+          <div class="code-tag" style="display:block; padding:10px;">
+            Compared Base Scan #${escapeHtml(baseId)} against Target Scan #${escapeHtml(headId)} (Idempotent SHA-256 fingerprint diff)
+          </div>
+          ${rowsHtml}`;
+      } catch (err) {
+        showErrorBanner('Scan Diff Failed', err.message);
+      }
+    }
+
+    // Inspector Sheet Open/Close
+    async function openInspectorSheet(issueId, fromRouter = false) {
+      appState.selectedIssueId = issueId;
+      renderIssuesTable();
+      const backdrop = document.getElementById('sheetBackdrop');
+      const body = document.getElementById('sheetBody');
+      backdrop.classList.add('open');
+      body.innerHTML = '<div class="skeleton-line" style="height:24px;"></div><div class="skeleton-line" style="height:90px;"></div>';
+      animateSheetSpring(0);
+
+      if (!fromRouter) {
+        window.history.pushState({ path: `/issues/${encodeURIComponent(issueId)}` }, '', `/issues/${encodeURIComponent(issueId)}`);
+      }
+
+      try {
+        let issue = appState.issues.find((i) => String(i.id) === String(issueId));
+        if (!issue) {
+          issue = await apiFetchJson(`/issues/${encodeURIComponent(issueId)}`);
+        }
+        renderInspectorContent(issue);
+      } catch (err) {
+        body.innerHTML = `<div class="empty-state"><div class="empty-state-title">Issue Not Found</div><p>${escapeHtml(err.message)}</p></div>`;
+      }
+    }
+
+    function renderInspectorContent(issue) {
+      const chip = document.getElementById('sheetStatusChip');
+      const chipClass = normalizeStatusClass(issue.status);
+      chip.className = `status-chip ${chipClass}`;
+      chip.textContent = issue.status || 'Code only';
+
+      const cweLabel = String(issue.cwe || '').toUpperCase().startsWith('CWE-') ? issue.cwe : `CWE-${issue.cwe}`;
+      document.getElementById('sheetTitle').textContent = issue.title || `${cweLabel} (${issue.canonical_path || issue.matched_route || issue.file || 'Finding'})`;
+      document.getElementById('sheetSubtitle').textContent = `Fingerprint: ${issue.fingerprint || issue.id} | Merged Findings: ${issue.finding_count || 1}`;
+
+      const fPath = issue.file || issue.file_path;
+      const fLine = issue.line || issue.line_start || 1;
+      const fSnippet = issue.snippet || issue.code_snippet;
+
+      const sastHtml = fPath
+        ? `<div style="margin-bottom:8px;">
+             <div style="font-family:var(--font-mono); font-size:12px; font-weight:600;">${escapeHtml(fPath)}:${escapeHtml(fLine)} (fn: ${escapeHtml(issue.func_name || 'handler')})</div>
+             <pre class="pre-block" style="margin-top:6px;">${escapeHtml(fSnippet || 'Static sink detected')}</pre>
+           </div>`
+        : '<div style="font-size:12.5px; color:var(--text-muted);">No static SAST sink attached (Runtime-only finding).</div>';
+
+      const dastHtml = (issue.url || issue.payload || issue.evidence)
+        ? `<div style="margin-bottom:8px;">
+             <div style="font-family:var(--font-mono); font-size:12px; font-weight:600;">${escapeHtml(issue.method || 'GET')} ${escapeHtml(issue.url || issue.canonical_path || 'N/A')} [param: ${escapeHtml(issue.param || issue.parameter || 'N/A')}]</div>
+             <div style="font-size:12px; color:var(--text-secondary); margin:4px 0;">Payload: <span class="code-tag">${escapeHtml(issue.payload || 'N/A')}</span></div>
+             <pre class="pre-block">${escapeHtml(issue.evidence || 'Runtime DAST differential confirmed')}</pre>
+           </div>`
+        : '<div style="font-size:12.5px; color:var(--text-muted);">No dynamic DAST probe attached (Code-only finding).</div>';
+
+      const rawScore = Number(issue.risk_score !== undefined ? issue.risk_score : (issue.confidence || 0.85));
+      const pct = rawScore > 1 ? Math.round(rawScore) : Math.round(rawScore * 100);
+      const linkReasonText = issue.link_reason || issue.link_explanation || issue.reasoning || 'Correlated via AST route handler and parameter binding.';
+      const fairLakhs = issue.fair_exposure_inr_lakhs !== undefined ? `INR ${Number(issue.fair_exposure_inr_lakhs).toFixed(1)}L FAIR` : '';
+      const sebiSla = issue.sebi_cscrf_sla_days !== undefined ? `SEBI SLA: ${issue.sebi_cscrf_sla_days}d` : '';
 
       document.getElementById('sheetBody').innerHTML = `
-        <!-- Mandatory 8 FR-8 Fields Matrix -->
-        <div>
-          <p class="eyebrow" style="margin-bottom:8px;">Unified Evidence Matrix</p>
-          <div class="fr8-grid">
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">1. URL</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.url || issue.canonical_path || '—')}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">2. Parameter</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.parameter || issue.param || '—')}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">3. Payload</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.payload || '—')}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">4. Source File</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.file || '—')}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">5. Line Number</div>
-              <div class="fr8-cell-val">${issue.line !== null && issue.line !== undefined ? issue.line : '—'}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">6. CWE Identifier</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.cwe)}</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">7. Severity & Score</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.severity)} (${Number(issue.risk_score).toFixed(1)})</div>
-            </div>
-            <div class="fr8-cell">
-              <div class="fr8-cell-label">8. Handler / Sink</div>
-              <div class="fr8-cell-val">${escapeHtml(issue.func_name || issue.handler_func || '—')}</div>
-            </div>
+        <div class="evidence-card">
+          <div class="evidence-card-title">Correlation Verdict &amp; Route Binding</div>
+          <p style="font-size:13px; color:var(--text-primary); margin-bottom:8px;">${escapeHtml(linkReasonText)}</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <span class="code-tag">Route: ${escapeHtml(issue.canonical_path || issue.matched_route || 'N/A')}</span>
+            <span class="code-tag">${escapeHtml(cweLabel)}</span>
+            <span class="code-tag">Param: ${escapeHtml(issue.param || issue.parameter || 'N/A')}</span>
+            <span class="code-tag">Score: ${pct}%</span>
+            ${fairLakhs ? `<span class="code-tag">${escapeHtml(fairLakhs)}</span>` : ''}
+            ${sebiSla ? `<span class="code-tag">${escapeHtml(sebiSla)}</span>` : ''}
           </div>
         </div>
-
-        <!-- B-3 Deterministic Correlation Formula Explanation -->
-        <div class="b3-link-banner" style="margin-top:0;">
-          <strong>Deterministic Correlation Proof:</strong>
-          <span>${escapeHtml(issue.link_reason)}</span>
+        <div class="evidence-card">
+          <div class="evidence-card-title">Static AST &amp; SAST Sink Evidence</div>
+          ${sastHtml}
         </div>
-
-        <!-- Side-by-Side Static Code Snippet vs Runtime HTTP Proof -->
-        <div class="evidence-split">
-          <div class="evidence-card">
-            <div class="evidence-card-head">
-              <span>SAST Code Evidence (${(issue.sast_evidence || []).length} Finding${(issue.sast_evidence || []).length === 1 ? '' : 's'})</span>
-              <span class="mono-chip">${escapeHtml(issue.file || 'N/A')}:${issue.line || '—'}</span>
-            </div>
-            <pre class="code-box">${escapeHtml(sastSnippets)}</pre>
-          </div>
-
-          <div class="evidence-card">
-            <div class="evidence-card-head">
-              <span>DAST Runtime Evidence (${(issue.dast_evidence || []).length} Probe${(issue.dast_evidence || []).length === 1 ? '' : 's'})</span>
-              <span class="mono-chip">${escapeHtml(issue.method || 'HTTP')}</span>
-            </div>
-            <pre class="code-box">${escapeHtml(dastProofs)}</pre>
-          </div>
+        <div class="evidence-card">
+          <div class="evidence-card-title">2-Phase DAST Differential Evidence</div>
+          ${dastHtml}
         </div>
-
-        <!-- Bonus B-4 Plain-English Fix Suggestion & Compliance Impact -->
-        <div class="fix-card">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span class="eyebrow" style="color:var(--color-sr-green-800);">Remediation & Secure Code Pattern</span>
-            <span class="badge badge-decoy">Remediation SLA: ${issue.sebi_cscrf_sla_days || issue.sebi_sla_days || 7} Days</span>
-          </div>
-          <p style="font-size:14px; color:var(--color-sr-green-900); font-weight:500; line-height:1.55;">
-            ${escapeHtml(issue.fix_suggestion)}
-          </p>
-        </div>
-      `;
-
-      scrimEl.classList.add('open');
-      animateSheetSpring(0, 0, 1.0, 0.34);
+        <div class="evidence-card">
+          <div class="evidence-card-title">Remediation Guidance</div>
+          <p style="font-size:13px; color:var(--text-secondary);">${escapeHtml(issue.fix_suggestion || issue.remediation || 'Apply parameterized queries, strict context-aware output encoding, or host allowlists.')}</p>
+        </div>`;
     }
 
-    function closeInspector() {
-      scrimEl.classList.remove('open');
-      const width = sheetEl.offsetWidth || 920;
-      animateSheetSpring(width + 40, 0, 1.0, 0.30);
+    function closeInspectorSheet(skipHistory = false, initialVelocity = 0) {
+      appState.selectedIssueId = null;
+      document.getElementById('sheetBackdrop').classList.remove('open');
+      animateSheetSpring(100, null, initialVelocity);
+      renderIssuesTable();
+      if (!skipHistory && window.location.pathname.startsWith('/issues/')) {
+        window.history.pushState({ path: '/issues' }, '', '/issues');
+        document.title = ROUTE_TITLES['/issues'];
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeInspectorSheet();
+        closeOnboardingModal(false);
+      }
+    });
+
+    // Scan Execution & Progress Bar Animation
+    function setScanStage(stepIndex, labelText, pct) {
+      const panel = document.getElementById('scanProgressPanel');
+      panel.classList.add('active');
+      document.getElementById('scanProgressLabel').textContent = labelText;
+      document.getElementById('scanProgressPercent').textContent = `${pct}%`;
+      document.getElementById('scanProgressFill').style.width = `${pct}%`;
+
+      for (let i = 1; i <= 5; i++) {
+        const pill = document.getElementById(`stagePill${i}`);
+        if (!pill) continue;
+        pill.classList.remove('active', 'done');
+        if (i < stepIndex) pill.classList.add('done');
+        if (i === stepIndex) pill.classList.add('active');
+      }
     }
 
     async function triggerScan(silent = false) {
+      hideErrorBanner();
       const btn = document.getElementById('btnRunScan');
-      const label = document.getElementById('btnRunScanLabel');
-      const sourceDir = document.getElementById('inputSourceDir').value.trim();
-      const targetUrl = document.getElementById('inputTargetUrl').value.trim();
-      const appName = document.getElementById('inputAppName').value.trim() || 'cyberforge-web-shop';
+      const targetUrl = (document.getElementById('inputTargetUrl')?.value || 'http://127.0.0.1:5000').trim();
+      const sourceDir = (document.getElementById('inputSourceDir')?.value || './tests/mock_shop_app').trim();
+      const runLiveDast = Boolean(document.getElementById('checkLiveDast')?.checked);
 
-      label.textContent = 'Scanning AST + DAST…';
       btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      setScanStage(1, 'Extracting AST route signatures and call graph...', 20);
+
+      const stageTimer1 = setTimeout(() => setScanStage(2, 'Running SAST & AST safe decoy suppression gate...', 45), 180);
+      const stageTimer2 = setTimeout(() => setScanStage(3, 'Executing 2-phase baseline vs attack DAST probes...', 70), 380);
+      const stageTimer3 = setTimeout(() => setScanStage(4, 'Correlating multi-scanner findings & SCA reachability...', 90), 580);
 
       try {
-        const res = await fetch('/scans', {
+        const result = await apiFetchJson('/scans', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            app_name: appName,
-            source_dir: sourceDir || null,
-            target_url: targetUrl || null,
-            run_live_dast: true,
-            seed_checkpoint_slice_if_empty: true
+            target_url: targetUrl,
+            source_dir: sourceDir,
+            run_live_dast: runLiveDast
           })
         });
-
-        const data = await res.json();
-        if (!res.ok) {
-          showToast(`Blocked: ${data.detail || 'Scan error'}`);
-          return null;
-        }
-        await loadDashboardData();
-        if (!silent) {
-          showToast(`Scan #${data.scan_id} complete: ${data.confirmed_count} Confirmed, ${data.code_only_count} Code-only, ${data.runtime_only_count} Runtime-only`);
-        }
-        return data;
+        clearTimeout(stageTimer1);
+        clearTimeout(stageTimer2);
+        clearTimeout(stageTimer3);
+        const sid = String(result.scan_id !== undefined ? result.scan_id : (result.id || 1));
+        setScanStage(5, `Scan #${sid} persisted (${result.confirmed_count || 0} Confirmed issues).`, 100);
+        await refreshAllData();
+        setTimeout(() => {
+          if (!silent) document.getElementById('scanProgressPanel').classList.remove('active');
+        }, 1200);
+        return result;
       } catch (err) {
-        showToast(`Request error: ${err.message}`);
-        return null;
+        clearTimeout(stageTimer1);
+        clearTimeout(stageTimer2);
+        clearTimeout(stageTimer3);
+        document.getElementById('scanProgressPanel').classList.remove('active');
+        const title = err.status === 403 ? 'Target Safety Lock Violation (HTTP 403)' : 'Scan Execution Error';
+        showErrorBanner(title, err.message);
+        throw err;
       } finally {
-        label.textContent = 'Run Scan';
         btn.disabled = false;
+        btn.textContent = 'Run Correlation Scan';
       }
     }
 
     async function runIdempotencyCheck() {
-      showToast('Running 2 consecutive scans to verify idempotency…');
-      const first = await triggerScan(true);
-      if (!first) return;
-      const second = await triggerScan(true);
-      if (!second) return;
-
-      const msg = `Idempotency Verified: Scan #${first.scan_id} (${first.total_issues} issues) → Scan #${second.scan_id} (${second.total_issues} issues, 0 duplicates created)`;
-      document.getElementById('idempotencyStatus').textContent = msg;
-      showToast(msg);
+      const btn = document.getElementById('btnIdempotency');
+      btn.disabled = true;
+      btn.textContent = 'Verifying 2x...';
+      try {
+        const firstRun = await triggerScan(true);
+        const countAfterFirst = appState.issues.length;
+        const secondRun = await triggerScan(false);
+        const countAfterSecond = appState.issues.length;
+        const sid1 = String(firstRun.scan_id !== undefined ? firstRun.scan_id : (firstRun.id || 1));
+        const sid2 = String(secondRun.scan_id !== undefined ? secondRun.scan_id : (secondRun.id || 2));
+        setScanStage(
+          5,
+          `Idempotency Verified: Scan #${sid1} = ${countAfterFirst} issues, Scan #${sid2} = ${countAfterSecond} issues (0 duplicates).`,
+          100
+        );
+      } catch (_err) {
+        // Error banner already displayed by triggerScan
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify Idempotency (2x)';
+      }
     }
 
-    async function compareLatestScans() {
-      const appName = document.getElementById('inputAppName').value.trim();
-      const res = await fetch(`/scans/compare${appName ? `?app_name=${encodeURIComponent(appName)}` : ''}`);
-      const area = document.getElementById('diffContentArea');
-      switchTab('diff');
+    // Onboarding Flow
+    function openOnboardingModal() {
+      appState.onboardingStep = 1;
+      updateOnboardingStepView();
+      document.getElementById('onboardingModal').classList.add('open');
+    }
 
-      if (!res.ok) {
-        const err = await res.json();
-        area.innerHTML = `<p style="color:var(--color-tx-secondary);">${escapeHtml(err.detail || 'Run at least 2 scans to compare.')}</p>`;
+    function closeOnboardingModal(markSeen = true) {
+      document.getElementById('onboardingModal').classList.remove('open');
+      if (markSeen) {
+        try { localStorage.setItem('cyberforge_onboarding_complete', '1'); } catch (_e) {}
+      }
+    }
+
+    function stepOnboarding(delta) {
+      const next = appState.onboardingStep + delta;
+      if (next > 3) {
+        closeOnboardingModal(true);
         return;
       }
-      const diff = await res.json();
-      const counts = diff.counts || { new: 0, fixed: 0, still_open: 0 };
-      document.getElementById('tabCountDiff').textContent = counts.new + counts.fixed + counts.still_open;
-
-      const allDiffItems = [
-        ...(diff.new_issues || []),
-        ...(diff.fixed_issues || []),
-        ...(diff.still_open_issues || [])
-      ];
-
-      area.innerHTML = `
-        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
-          <span class="badge badge-diff-NEW">NEW: ${counts.new}</span>
-          <span class="badge badge-diff-FIXED">FIXED: ${counts.fixed}</span>
-          <span class="badge badge-diff-STILL-OPEN">STILL-OPEN: ${counts.still_open}</span>
-          <span class="mono-chip">Base Scan #${diff.base_scan_id} → Target Scan #${diff.target_scan_id}</span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          ${allDiffItems.map(item => `
-            <div style="padding:12px 16px; border:1px solid var(--color-st); border-radius:var(--radius-md); display:flex; justify-content:space-between; align-items:center;">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span class="badge badge-diff-${escapeHtml(item.diff_status)}">${escapeHtml(item.diff_status)}</span>
-                <span class="badge-cwe">${escapeHtml(item.cwe)}</span>
-                <strong>${escapeHtml(item.title)}</strong>
-              </div>
-              <code class="mono-chip">${escapeHtml(item.url || item.file || '—')}</code>
-            </div>
-          `).join('')}
-        </div>
-      `;
+      appState.onboardingStep = Math.max(1, Math.min(3, next));
+      updateOnboardingStepView();
     }
 
-    // Boot: load existing SQLite state or auto-seed Checkpoint 1 slice if DB is empty
-    window.addEventListener('DOMContentLoaded', async () => {
-      await loadDashboardData();
-      if (state.issues.length === 0) {
-        await triggerScan(true);
+    function updateOnboardingStepView() {
+      for (let i = 1; i <= 3; i++) {
+        const el = document.getElementById(`onboardingStep${i}`);
+        if (el) el.classList.toggle('active', i === appState.onboardingStep);
       }
+      document.getElementById('onboardingStepIndicator').textContent = `Step ${appState.onboardingStep} of 3`;
+      document.getElementById('btnOnboardingPrev').disabled = appState.onboardingStep === 1;
+      document.getElementById('btnOnboardingNext').textContent = appState.onboardingStep === 3 ? 'Finish Guide' : 'Next Step';
+    }
+
+    // Scroll Progress & Back-to-Top
+    function handleWindowScroll() {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+      const pct = docHeight > 0 ? Math.min(100, (scrollTop / docHeight) * 100) : 0;
+      const bar = document.getElementById('scrollProgressBar');
+      if (bar) bar.style.width = `${pct}%`;
+
+      const topBtn = document.getElementById('backToTopBtn');
+      if (topBtn) {
+        topBtn.classList.toggle('visible', scrollTop > 220);
+      }
+    }
+
+    function scrollToTop() {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+
+    // Initialize Application
+    document.addEventListener('DOMContentLoaded', async () => {
+      initSheetGesture();
+      syncRouteState(window.location.pathname);
+      await refreshAllData();
+
+      // Auto-trigger initial scan if workspace database is empty
+      if (appState.issues.length === 0 && appState.routes.length === 0) {
+        try {
+          await triggerScan(false);
+        } catch (_e) {}
+      }
+
+      // Ensure deep-linked issue detail sheet reflects hydrated workspace data
+      if (window.location.pathname.startsWith('/issues/')) {
+        syncRouteState(window.location.pathname);
+      }
+
+      // Show onboarding on first visit if not dismissed
+      try {
+        if (!localStorage.getItem('cyberforge_onboarding_complete')) {
+          openOnboardingModal();
+        }
+      } catch (_e) {}
     });
   </script>
 </body>

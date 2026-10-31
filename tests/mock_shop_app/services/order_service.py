@@ -8,10 +8,10 @@ import sqlite3
 _SEED_SQL = (
     "DROP TABLE IF EXISTS orders;"
     "CREATE TABLE orders (id TEXT PRIMARY KEY, item TEXT, customer TEXT, amount TEXT, status TEXT);"
-    "INSERT INTO orders VALUES ('1', 'MacBook Pro 16 M3 Max (64GB)', 'Aarav Sharma', 'Rs. 3,49,900', 'DELIVERED');"
-    "INSERT INTO orders VALUES ('2', 'CyberForge Hardware HSM Vault', 'Priya Nair', 'Rs. 1,85,000', 'SHIPPED');"
-    "INSERT INTO orders VALUES ('3', 'Zero-Trust Enterprise Firewall', 'Vikram Rao', 'Rs. 4,20,000', 'PROCESSING');"
-    "INSERT INTO orders VALUES ('99', 'CONFIDENTIAL: Root Master Key Backup', 'Admin Vault', 'Rs. 99,99,999', 'RESTRICTED');"
+    "INSERT OR REPLACE INTO orders VALUES ('1', 'MacBook Pro 16 M3 Max (64GB)', 'Aarav Sharma', 'Rs. 3,49,900', 'DELIVERED');"
+    "INSERT OR REPLACE INTO orders VALUES ('2', 'CyberForge Hardware HSM Vault', 'Priya Nair', 'Rs. 1,85,000', 'SHIPPED');"
+    "INSERT OR REPLACE INTO orders VALUES ('3', 'Zero-Trust Enterprise Firewall', 'Vikram Rao', 'Rs. 4,20,000', 'PROCESSING');"
+    "INSERT OR REPLACE INTO orders VALUES ('99', 'CONFIDENTIAL: Root Master Key Backup', 'Admin Vault', 'Rs. 99,99,999', 'RESTRICTED');"
 )
 
 

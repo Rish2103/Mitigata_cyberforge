@@ -871,4 +871,198 @@ def test_subblock2_ui_dashboard_and_checkpoint1_slice() -> None:
             os.environ.pop("GORDON_DB_PATH", None)
 
 
+def test_full_e2e_mock_shop_scan_and_ui_ux_requirements() -> None:
+    """
+    Verify all fixed backend bugs and UI/UX hardening requirements:
+      1. POST /scans on ./tests/mock_shop_app with run_live_dast=True runs AST RouteMapper,
+         SAST, DecoyFilter, 2-phase in-process DAST, Correlator (including cross-file
+         services/order_service.py helper correlation), and SCA reachability.
+      2. GET /health reports server-isolated credentials, GET /favicon.ico returns SVG,
+         and SPA routes (/privacy, /terms, /404, and unknown paths) respond properly.
+      3. ui/index.html has zero emojis, zero em dashes, crisp radii (<= 6px), onboarding,
+         scroll progress bar, back-to-top button, skeleton loaders, and error banner.
+    """
+    import re
 
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "e2e_mock_shop.db")
+        os.environ["CYBERFORGE_DB_PATH"] = db_path
+        try:
+            with TestClient(gordon_api_app) as client:
+                # 1. Verify UI HTML constraints
+                ui_res = client.get("/")
+                assert ui_res.status_code == 200
+                html_text = ui_res.text
+
+                # Zero em dashes or en dashes
+                assert "\u2014" not in html_text
+                assert "\u2013" not in html_text
+                assert "&mdash;" not in html_text
+
+                # Zero emojis (check supplementary pictographs and miscellaneous symbols)
+                emoji_pattern = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+                assert emoji_pattern.search(html_text) is None
+
+                # Crisp radii only (no 9999px pill radii)
+                assert "9999px" not in html_text
+                assert "--radius-xs: 2px" in html_text
+                assert "--radius-sm: 4px" in html_text
+                assert "--radius-md: 6px" in html_text
+
+                # Required UI components present
+                assert "scrollProgressBar" in html_text
+                assert "backToTopBtn" in html_text
+                assert "onboardingModal" in html_text
+                assert "errorBanner" in html_text
+                assert "viewPrivacy" in html_text
+                assert "viewTerms" in html_text
+                assert "view404" in html_text
+                assert 'rel="icon"' in html_text
+
+                # 2. Verify favicon, health credential isolation, privacy, terms, and 404 routes
+                fav_res = client.get("/favicon.ico")
+                assert fav_res.status_code == 200
+                assert "image/svg+xml" in fav_res.headers.get("content-type", "")
+
+                health_res = client.get("/health")
+                assert health_res.status_code == 200
+                h_json = health_res.json()
+                assert h_json["credential_isolation"]["frontend_api_keys"] is False
+
+                assert client.get("/privacy").status_code == 200
+                assert client.get("/terms").status_code == 200
+                assert client.get("/404").status_code == 404
+                not_found_html = client.get("/nonexistent-page-route", headers={"Accept": "text/html"})
+                assert not_found_html.status_code == 404
+                assert "view404" in not_found_html.text
+
+                # 3. Run full E2E scan on ./tests/mock_shop_app with live DAST
+                scan_res = client.post(
+                    "/scans",
+                    json={
+                        "target_url": "http://127.0.0.1:5000",
+                        "source_dir": "./tests/mock_shop_app",
+                        "run_live_dast": True,
+                    },
+                )
+                assert scan_res.status_code == 200
+                scan_data = scan_res.json()
+                assert scan_data["confirmed_count"] >= 4
+                assert scan_data["safe_decoys_suppressed"] >= 3
+
+                # Verify cross-file helper correlation (services/order_service.py) is Confirmed
+                issues_res = client.get("/issues")
+                assert issues_res.status_code == 200
+                issues_list = issues_res.json()
+                confirmed_files = {
+                    (i.get("file_path") or i.get("file") or "")
+                    for i in issues_list
+                    if i["status"] == "Confirmed"
+                }
+                assert any("order_service.py" in f for f in confirmed_files)
+
+                # Verify decoys and SCA endpoints populate
+                decoys_res = client.get("/decoys")
+                assert decoys_res.status_code == 200
+                assert len(decoys_res.json()) >= 3
+
+                sca_res = client.get("/sca")
+                assert sca_res.status_code == 200
+                assert len(sca_res.json()) >= 1
+        finally:
+            os.environ.pop("CYBERFORGE_DB_PATH", None)
+
+
+def test_adversarial_review_regression_suite() -> None:
+    """
+    Regression suite verifying all 7 issues caught during adversarial review:
+      1. Zero leftover 'gordon' canary tokens or branding in engine/dast_scanner.py,
+         core/config.py, and tests/demo_checkpoint1.py.
+      2. tests/demo_checkpoint1.py runs cleanly and returns the expected 4-stage pipeline dict.
+      3. ui/index.html binds to the real backend schema fields (`issue.link_reason`,
+         `s.call_chain`, `diff.summary`, `Code only`, `Runtime only`, `CWE-798`, `CWE-693`).
+      4. ui/index.html implements Apple fluid spring velocity handoff (`projectMomentum`,
+         `initialVelocity`) and `@media (prefers-reduced-motion: reduce)` +
+         `@media (prefers-reduced-transparency: reduce)`.
+      5. GET /issues/{non-numeric} returns 404 JSON for API calls and 200 SPA HTML for
+         browser document navigation instead of 422 Unprocessable Entity.
+      6. GET /scans/compare returns both `summary` (`new_count`, `fixed_count`, `still_open_count`)
+         and `counts` (`new`, `fixed`, `still_open`) plus issue arrays.
+    """
+    from pathlib import Path
+    import subprocess
+    import sys
+    import json
+
+    project_root = Path(__file__).resolve().parent.parent
+
+    # 1. Verify zero 'gordon' occurrences in engine/dast_scanner.py, core/config.py, tests/demo_checkpoint1.py
+    for rel_path in ("engine/dast_scanner.py", "core/config.py", "tests/demo_checkpoint1.py"):
+        content = (project_root / rel_path).read_text(encoding="utf-8")
+        assert "gordon" not in content.lower(), f"Found leftover 'gordon' string in {rel_path}"
+
+    # 2. Verify tests/demo_checkpoint1.py executes end-to-end and exports accurate counts
+    with tempfile.TemporaryDirectory() as demo_tmp:
+        out_json = os.path.join(demo_tmp, "demo_out.json")
+        proc = subprocess.run(
+            [sys.executable, "-m", "tests.demo_checkpoint1", "--out", out_json],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert proc.returncode == 0
+        demo_report = json.loads(Path(out_json).read_text(encoding="utf-8"))
+        assert len(demo_report["routes"]) in (16, 20)
+        assert len(demo_report["sast_suppressed_decoys"]) in (10, 12)
+        confirmed_demo = [i for i in demo_report["correlated_issues"] if i["status"] == "Confirmed"]
+        assert len(confirmed_demo) == 6
+
+    # 3 & 4. Verify UI schema bindings and Apple design velocity + reduced-motion media queries
+    ui_html = (project_root / "ui/index.html").read_text(encoding="utf-8")
+    assert "issue.link_reason" in ui_html
+    assert "s.call_chain" in ui_html
+    assert "diff.summary" in ui_html
+    assert "projectMomentum" in ui_html
+    assert "initialVelocity" in ui_html
+    assert "@media (prefers-reduced-motion: reduce)" in ui_html
+    assert "@media (prefers-reduced-transparency: reduce)" in ui_html
+    assert '<option value="Code only">' in ui_html
+    assert '<option value="Runtime only">' in ui_html
+    assert '<option value="798">' in ui_html
+    assert '<option value="693">' in ui_html
+
+    # 5 & 6. Verify /issues/{issue_id} string handling and /scans/compare schema
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "review_reg.db")
+        os.environ["CYBERFORGE_DB_PATH"] = db_path
+        try:
+            with TestClient(gordon_api_app) as client:
+                s1 = client.post(
+                    "/scans",
+                    json={"app_name": "diff-app", "run_live_dast": False, "seed_checkpoint_slice_if_empty": True},
+                ).json()
+                s2 = client.post(
+                    "/scans",
+                    json={"app_name": "diff-app", "run_live_dast": False, "seed_checkpoint_slice_if_empty": True},
+                ).json()
+
+                diff_res = client.get(f"/scans/compare?scan_a={s1['scan_id']}&scan_b={s2['scan_id']}")
+                assert diff_res.status_code == 200
+                diff_data = diff_res.json()
+                assert "summary" in diff_data
+                assert "counts" in diff_data
+                assert diff_data["summary"]["still_open_count"] == 5
+                assert diff_data["counts"]["still_open"] == 5
+                assert len(diff_data["still_open_issues"]) == 5
+
+                # Non-numeric /issues/{id} for JSON client -> 404 (not 422)
+                api_404 = client.get("/issues/non-numeric-id", headers={"Accept": "application/json"})
+                assert api_404.status_code == 404
+
+                # Non-numeric /issues/{id} for HTML browser client -> 200 SPA shell
+                html_200 = client.get("/issues/non-numeric-id", headers={"Accept": "text/html"})
+                assert html_200.status_code == 200
+                assert "inspectorSheet" in html_200.text
+        finally:
+            os.environ.pop("CYBERFORGE_DB_PATH", None)

@@ -278,6 +278,48 @@ class DecoyFilter:
                     finding.decoy_reason = (
                         f"Unreachable dead code: function at {norm_path}:{finding.line} is never reached by any URL route"
                     )
-                    return finding
-
         return finding
+
+
+def filter_decoys(
+    sast_findings: list[CanonicalFinding],
+    routes: Optional[list[Any]] = None,
+    route_mapper: Optional[Any] = None,
+) -> list[CanonicalFinding]:
+    """
+    Module-level helper invoked by api/main.py to evaluate a list of SAST CanonicalFinding
+    objects against all B-2 decoy suppression rules (parameterized SQL, shell=False/shlex.quote,
+    HTML escaping, path canonicalization, safe redirect allowlists, and dead-code reachability).
+    """
+    active_mapper = route_mapper if (route_mapper is not None and getattr(route_mapper, "_has_scanned_files", False)) else None
+    reachable_files = active_mapper.get_reachable_files() if active_mapper is not None else None
+
+    filtered: list[CanonicalFinding] = []
+    for f in sast_findings:
+        if f.is_protected_decoy:
+            filtered.append(f)
+            continue
+
+        snippet = f.code_snippet or f.snippet or ""
+        extracted_call: Optional[ast.Call] = None
+        if snippet.strip():
+            try:
+                tree = ast.parse(snippet.strip())
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call):
+                        extracted_call = node
+                        break
+            except Exception:
+                extracted_call = None
+
+        filtered.append(
+            DecoyFilter.filter_finding(
+                finding=f,
+                call_node=extracted_call,
+                enclosing_snippet=snippet,
+                reachable_files=reachable_files,
+                route_mapper=active_mapper,
+            )
+        )
+    return filtered
+

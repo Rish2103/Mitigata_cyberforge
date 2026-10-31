@@ -189,23 +189,38 @@ class Correlator:
         (e.g. from AST scanner + Bandit/Semgrep or repeated runs) into one canonical finding
         with all evidence attached.
         """
-        grouped: Dict[Tuple[str, str, int], CanonicalFinding] = {}
+        grouped: Dict[Tuple[str, str, int, str], CanonicalFinding] = {}
         for f in sast_findings:
             if f.is_protected_decoy:
                 continue
-            norm_file = (f.file_path or "").replace("\\", "/").lstrip("./")
-            key = (f.cwe, norm_file, f.line or 0)
-            if key not in grouped:
+            norm_file = (f.file_path or f.file or "").replace("\\", "/").lstrip("./")
+            norm_param = (f.param or "").strip().lower()
+            # Group by (cwe, norm_file, line) when param is empty or matches existing group
+            base_key = (f.cwe, norm_file, f.line or 0, norm_param)
+            fallback_key = (f.cwe, norm_file, f.line or 0, "")
+            target_key = base_key
+            if base_key not in grouped and fallback_key in grouped:
+                target_key = fallback_key
+            elif norm_param == "":
+                for gk in grouped:
+                    if gk[0] == f.cwe and gk[1] == norm_file and gk[2] == (f.line or 0):
+                        target_key = gk
+                        break
+
+            if target_key not in grouped:
                 cloned = f.model_copy(deep=True)
                 cloned.raw_details.setdefault("merged_finding_ids", [f.id])
-                grouped[key] = cloned
+                grouped[target_key] = cloned
             else:
-                existing = grouped[key]
+                existing = grouped[target_key]
                 merged_ids = existing.raw_details.setdefault("merged_finding_ids", [existing.id])
                 if f.id not in merged_ids:
                     merged_ids.append(f.id)
                 if not existing.code_snippet and f.code_snippet:
                     existing.code_snippet = f.code_snippet
+                    existing.snippet = f.code_snippet
+                if not existing.param and f.param:
+                    existing.param = f.param
         return list(grouped.values())
 
     def _deduplicate_dast_findings(self, dast_findings: List[CanonicalFinding]) -> List[CanonicalFinding]:
@@ -215,7 +230,7 @@ class Correlator:
         """
         grouped: Dict[Tuple[str, str, str, str], CanonicalFinding] = {}
         for d in dast_findings:
-            raw_url = (d.url or "").strip()
+            raw_url = (d.url or d.canonical_path or "").strip()
             clean_url = raw_url.split("?")[0].rstrip("/") or "/"
             matched_route = self.route_mapper.match_url(d.method or "GET", raw_url) if raw_url else None
             route_key = matched_route.path_pattern if matched_route else clean_url
@@ -296,16 +311,29 @@ class Correlator:
         matched_sast_ids: Set[str] = set()
         matched_dast_ids: Set[str] = set()
 
+        # Build lookup maps from finding ID -> CanonicalFinding for full multi-scanner evidence lists
+        raw_sast_by_id: Dict[str, CanonicalFinding] = {
+            f.id: f for f in sast_findings if not f.is_protected_decoy
+        }
+        raw_dast_by_id: Dict[str, CanonicalFinding] = {d.id: d for d in dast_findings}
+
         # Step 1: Filter out protected decoys (B-2) and deduplicate findings on the same bug (FR-6)
         active_sast = self._deduplicate_sast_findings(sast_findings)
         active_dast = self._deduplicate_dast_findings(dast_findings)
 
+        # Sort DAST findings so concrete parameter probes are matched before parameterless findings
+        active_dast_sorted = sorted(
+            active_dast,
+            key=lambda df: (0 if df.param else 1),
+        )
+
         # Step 2: Correlate DAST findings with SAST findings
-        for d in active_dast:
-            if not d.url:
+        for d in active_dast_sorted:
+            target_url = d.url or d.canonical_path or ""
+            if not target_url:
                 continue
 
-            dast_route = self.route_mapper.match_url(d.method or "GET", d.url)
+            dast_route = self.route_mapper.match_url(d.method or "GET", target_url)
             if not dast_route:
                 continue
 
@@ -318,17 +346,20 @@ class Correlator:
                 if s.cwe != d.cwe:
                     continue
 
-                # VETO 2: Code location (file + line) must be inside the route handler or its called helpers
+                # VETO 3: Code location (file + line) must be inside the route handler or its called helpers
                 if s.file_path and s.line:
                     if self.route_mapper.is_line_in_route(s.file_path, s.line, dast_route):
-                        # VETO 3: Multi-parameter conflict check
+                        # VETO 4: Multi-parameter snippet conflict check
                         if self._has_parameter_conflict(s.code_snippet or "", d.param, dast_route.parameters):
                             continue
 
                         score = 10  # base match for route + CWE
                         param_match_note = ""
                         if d.param:
-                            if s.code_snippet and d.param.lower() in s.code_snippet.lower():
+                            if s.param and d.param.lower() == s.param.lower():
+                                score += 25
+                                param_match_note = f" + Parameter '{d.param}' verified in sink call"
+                            elif s.code_snippet and d.param.lower() in s.code_snippet.lower():
                                 score += 20
                                 param_match_note = f" + Parameter '{d.param}' verified in sink call"
                             elif dast_route.parameters and d.param.lower() in [p.lower() for p in dast_route.parameters]:
@@ -352,6 +383,21 @@ class Correlator:
                 matched_sast_ids.add(best_sast.id)
                 matched_dast_ids.add(d.id)
 
+                sast_merged_ids = best_sast.raw_details.get("merged_finding_ids", [best_sast.id])
+                dast_merged_ids = d.raw_details.get("merged_finding_ids", [d.id])
+                sast_ev = [raw_sast_by_id[fid] for fid in sast_merged_ids if fid in raw_sast_by_id] or [best_sast]
+                dast_ev = [raw_dast_by_id[fid] for fid in dast_merged_ids if fid in raw_dast_by_id] or [d]
+                effective_param = d.param or best_sast.param
+                effective_sev = (
+                    Severity.CRITICAL
+                    if (d.severity == Severity.CRITICAL or best_sast.severity == Severity.CRITICAL)
+                    else best_sast.severity
+                )
+                route_desc = (
+                    f"{dast_route.method} {dast_route.path_pattern} -> "
+                    f"{dast_route.func_name}(), {dast_route.file_path}:{dast_route.start_line}-{dast_route.end_line}"
+                )
+
                 issue_id = _generate_issue_id(
                     "CONF",
                     best_sast.cwe,
@@ -362,15 +408,19 @@ class Correlator:
                     status=IssueStatus.CONFIRMED,
                     cwe=best_sast.cwe,
                     cwe_name=CWE_NAMES.get(best_sast.cwe, best_sast.cwe),
-                    severity=best_sast.severity,
-                    risk_score=_compute_risk_score(IssueStatus.CONFIRMED, best_sast.cwe, best_sast.severity),
+                    severity=effective_sev,
+                    risk_score=_compute_risk_score(IssueStatus.CONFIRMED, best_sast.cwe, effective_sev),
                     url=d.url,
-                    method=d.method,
-                    param=d.param,
+                    canonical_path=dast_route.canonical_path,
+                    method=d.method or dast_route.method,
+                    param=effective_param,
                     payload=d.payload,
+                    evidence=d.evidence,
                     file_path=best_sast.file_path,
                     line=best_sast.line,
+                    func_name=best_sast.func_name or dast_route.func_name,
                     code_snippet=best_sast.code_snippet,
+                    matched_route=route_desc,
                     link_reason=best_link_reason,
                     fix_suggestion=_get_fix_suggestion(
                         best_sast.cwe,
@@ -379,14 +429,19 @@ class Correlator:
                     ),
                     sast_finding=best_sast,
                     dast_finding=d,
+                    sast_evidence=sast_ev,
+                    dast_evidence=dast_ev,
+                    finding_count=len(sast_ev) + len(dast_ev),
                     estimated_exposure_inr=5000000.0 if best_sast.cwe in ("CWE-89", "CWE-78") else 1500000.0,
-                    sebi_sla_days=7 if best_sast.severity == Severity.CRITICAL else 30,
+                    sebi_sla_days=7 if effective_sev == Severity.CRITICAL else 30,
                 )
                 correlated_issues.append(issue)
 
         # Step 3: Remaining SAST findings become 'Code only' (FR-7)
         for s in active_sast:
             if s.id not in matched_sast_ids:
+                sast_merged_ids = s.raw_details.get("merged_finding_ids", [s.id])
+                sast_ev = [raw_sast_by_id[fid] for fid in sast_merged_ids if fid in raw_sast_by_id] or [s]
                 issue_id = _generate_issue_id("CODE", s.cwe, f"{s.file_path}:{s.line}")
                 issue = CorrelatedIssue(
                     id=issue_id,
@@ -397,11 +452,16 @@ class Correlator:
                     risk_score=_compute_risk_score(IssueStatus.CODE_ONLY, s.cwe, s.severity),
                     file_path=s.file_path,
                     line=s.line,
+                    func_name=s.func_name,
+                    param=s.param,
                     code_snippet=s.code_snippet,
                     link_reason="Code only: Vulnerable code pattern detected by SAST, not yet proven at runtime",
                     fix_suggestion=_get_fix_suggestion(s.cwe, s.param, s.code_snippet),
                     sast_finding=s,
                     dast_finding=None,
+                    sast_evidence=sast_ev,
+                    dast_evidence=[],
+                    finding_count=len(sast_ev),
                     estimated_exposure_inr=500000.0,
                     sebi_sla_days=90,
                 )
@@ -410,6 +470,11 @@ class Correlator:
         # Step 4: Remaining DAST findings become 'Runtime only' (FR-7)
         for d in active_dast:
             if d.id not in matched_dast_ids:
+                dast_merged_ids = d.raw_details.get("merged_finding_ids", [d.id])
+                dast_ev = [raw_dast_by_id[fid] for fid in dast_merged_ids if fid in raw_dast_by_id] or [d]
+                target_url = d.url or d.canonical_path or ""
+                matched_r = self.route_mapper.match_url(d.method or "GET", target_url) if target_url else None
+                resolved_canonical = matched_r.canonical_path if matched_r else d.canonical_path
                 key = f"{d.url}:{d.param or 'header'}:{d.cwe}"
                 issue_id = _generate_issue_id("RUNTIME", d.cwe, key)
                 issue = CorrelatedIssue(
@@ -420,14 +485,19 @@ class Correlator:
                     severity=d.severity,
                     risk_score=_compute_risk_score(IssueStatus.RUNTIME_ONLY, d.cwe, d.severity),
                     url=d.url,
+                    canonical_path=resolved_canonical,
                     method=d.method,
                     param=d.param,
                     payload=d.payload,
+                    evidence=d.evidence,
                     code_snippet=None,
                     link_reason="Runtime only: Exploit proven at runtime, but no corresponding AST sink located",
                     fix_suggestion=_get_fix_suggestion(d.cwe, d.param),
                     sast_finding=None,
                     dast_finding=d,
+                    sast_evidence=[],
+                    dast_evidence=dast_ev,
+                    finding_count=len(dast_ev),
                     estimated_exposure_inr=1000000.0,
                     sebi_sla_days=30,
                 )
@@ -453,3 +523,22 @@ class Correlator:
         )
 
         return sorted_issues
+
+
+def correlate_findings(
+    routes: List[RouteEntry],
+    sast_findings: List[CanonicalFinding],
+    dast_findings: List[CanonicalFinding],
+    route_mapper: Optional[RouteMapper] = None,
+) -> List[CorrelatedIssue]:
+    """
+    Module-level correlation entrypoint invoked by api/main.py.
+    Uses an existing RouteMapper (with full 3-hop call graph) when provided,
+    or constructs a RouteMapper from `routes` via `RouteMapper.from_routes(routes)`.
+    """
+    mapper = route_mapper if route_mapper is not None else RouteMapper.from_routes(routes)
+    if routes and not mapper.routes:
+        mapper = RouteMapper.from_routes(routes, root_dir=getattr(mapper, "root_dir", "."))
+    engine = Correlator(mapper)
+    return engine.correlate(sast_findings, dast_findings)
+

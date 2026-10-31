@@ -416,12 +416,44 @@ class RouteMapper:
         self._router_mount_prefixes: Dict[str, str] = {}
         self._pydantic_models: Dict[str, List[str]] = {}
         self._pending_view_routes: List[Tuple[str, str, str]] = []
+        self._has_scanned_files: bool = False
+
+    @classmethod
+    def from_routes(cls, routes: List[RouteEntry], root_dir: str = ".") -> "RouteMapper":
+        """
+        Constructs a RouteMapper instance from pre-seeded RouteEntry objects
+        (e.g. from ScanPipelineRequest.seeded_routes or fallback route lists).
+        """
+        mapper = cls(root_dir)
+        mapper.routes = list(routes or [])
+        for r in mapper.routes:
+            if r.func_name and r.file_path:
+                mapper.func_to_file_lines[r.func_name] = (r.file_path, r.start_line, r.end_line)
+                mapper.func_defs.setdefault(r.func_name, []).append(
+                    (r.file_path, r.start_line, r.end_line, set(r.called_funcs or []), set(r.parameters or []))
+                )
+            if r.func_name and r.called_funcs:
+                mapper.call_graph.setdefault(r.func_name, set()).update(r.called_funcs)
+            for cf in getattr(r, "called_func_details", None) or []:
+                if cf.name and cf.file:
+                    mapper.func_to_file_lines[cf.name] = (cf.file, cf.start_line, cf.end_line)
+                    mapper.func_defs.setdefault(cf.name, []).append(
+                        (cf.file, cf.start_line, cf.end_line, set(), set())
+                    )
+            pat = r.regex_pattern or _normalize_route_pattern_to_regex(r.path_pattern)
+            try:
+                comp = re.compile(pat, re.IGNORECASE)
+                mapper._compiled_matchers.append((r, comp))
+            except Exception:
+                pass
+        return mapper
 
     def scan_directory(self) -> List[RouteEntry]:
         """Alias for `scan()` used by CLI and integration runners."""
         return self.scan()
 
     def scan(self) -> List[RouteEntry]:
+        self._has_scanned_files = True
         self.routes = []
         self._compiled_matchers = []
         self.call_graph = {}
@@ -863,10 +895,12 @@ class RouteMapper:
         norm_target_file = file_path.replace("\\", "/").lstrip("./")
         norm_route_file = route.file_path.replace("\\", "/").lstrip("./")
 
-        # 1. Direct handler match
+        # 1. Direct handler match or explicit called_func_details coverage
         if norm_target_file == norm_route_file:
             if route.start_line <= line <= route.end_line:
                 return True
+        if hasattr(route, "covers_location") and route.covers_location(file_path, line):
+            return True
 
         # 2. Check multi-hop called helpers across all definitions
         expanded_helpers = self._expand_called_functions(set(route.called_funcs), max_hops=max_hops)

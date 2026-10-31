@@ -1,7 +1,7 @@
 """
 engine/dast_scanner.py — 2-Phase Scope-Locked Async DAST Engine (FR-2, FR-6, FR-7).
 
-Built for GORDON CORRELATE (Mitigata Hackathon 2026 — PROBLEM 06 · FLAGSHIP).
+Built for CYBERFORGE CORRELATE (Mitigata Hackathon 2026 — PROBLEM 06 · FLAGSHIP).
 
 Architecture:
   - Strict Target Safety Lock (`core/config.py`): refuses any URL outside `localhost`,
@@ -13,10 +13,10 @@ Architecture:
     benign diagnostic probes for:
       1. `CWE-89` (SQL Injection): syntax quote (`1'`) & boolean differential
          (`1' OR '1'='1` vs `1' AND '1'='2`) compared against the clean baseline.
-      2. `CWE-79` (Cross-Site Scripting): unique canary (`<script>gordon_canary_79</script>`)
+      2. `CWE-79` (Cross-Site Scripting): unique canary (`<script>cyberforge_canary_79</script>`)
          verified for unescaped HTML reflection (ignoring HTML-encoded `&lt;script&gt;`
          safe decoys and `application/json` responses).
-      3. `CWE-601` (Open Redirect): tests `https://gordon-redirect-canary.invalid/verify`
+      3. `CWE-601` (Open Redirect): tests `https://cyberforge-redirect-canary.invalid/verify`
          with `follow_redirects=False` and inspects `30x Location` headers.
       4. `CWE-22` (Path Traversal) & `CWE-78` (Command Injection): benign canary diagnostics
          for file/path and command/diagnostic parameters.
@@ -53,9 +53,9 @@ from core.schemas import (
 # Diagnostic Canary Constants & Detection Signatures
 # ---------------------------------------------------------------------------
 
-XSS_SCRIPT_CANARY = "<script>gordon_canary_79</script>"
-XSS_ATTR_CANARY = '" autofocus onfocus="gordon_canary_79'
-CMD_ECHO_CANARY_TOKEN = "gordon_cmd_canary_78"
+XSS_SCRIPT_CANARY = "<script>cyberforge_canary_79</script>"
+XSS_ATTR_CANARY = '" autofocus onfocus="cyberforge_canary_79'
+CMD_ECHO_CANARY_TOKEN = "cyberforge_cmd_canary_78"
 
 SQL_ERROR_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"sqlite3\.OperationalError", re.IGNORECASE),
@@ -75,7 +75,7 @@ SQL_ERROR_PATTERNS: List[re.Pattern[str]] = [
 PATH_TRAVERSAL_SIGNATURES: List[re.Pattern[str]] = [
     re.compile(r"root:x:0:0:", re.IGNORECASE),
     re.compile(r"\[extensions\]|\[fonts\]", re.IGNORECASE),
-    re.compile(r"gordon_traversal_canary_22", re.IGNORECASE),
+    re.compile(r"cyberforge_traversal_canary_22", re.IGNORECASE),
 ]
 
 REDIRECT_PARAM_HINTS: Set[str] = {
@@ -590,7 +590,7 @@ class DASTScanner:
                 matched_err = m.group(0)
                 return CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-a",
+                    scanner_name="cyberforge-dast-phase-a",
                     cwe="CWE-89",
                     title="SQL Injection (Database Error Confirmed)",
                     severity="Critical",
@@ -623,7 +623,7 @@ class DASTScanner:
             ):
                 return CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-a",
+                    scanner_name="cyberforge-dast-phase-a",
                     cwe="CWE-89",
                     title="SQL Injection (500 Syntax Break + Tautology Recovery)",
                     severity="Critical",
@@ -645,7 +645,7 @@ class DASTScanner:
             if resp_true.status_code == 200 and resp_false.status_code >= 400:
                 return CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-a",
+                    scanner_name="cyberforge-dast-phase-a",
                     cwe="CWE-89",
                     title="SQL Injection (Boolean Status Differential Confirmed)",
                     severity="Critical",
@@ -686,7 +686,7 @@ class DASTScanner:
                 ):
                     return CanonicalFinding(
                         source="DAST",
-                        scanner_name="gordon-dast-phase-a",
+                        scanner_name="cyberforge-dast-phase-a",
                         cwe="CWE-89",
                         title="SQL Injection (Boolean Differential Confirmed)",
                         severity="Critical",
@@ -717,7 +717,7 @@ class DASTScanner:
     ) -> Optional[CanonicalFinding]:
         """
         Phase A Check for CWE-79 (Cross-Site Scripting):
-          Sends `<script>gordon_canary_79</script>` and verifies that it reflects
+          Sends `<script>cyberforge_canary_79</script>` and verifies that it reflects
           UNESCAPED inside an HTML response body (ignoring JSON responses and
           HTML-escaped `&lt;script&gt;` decoys).
         """
@@ -735,7 +735,7 @@ class DASTScanner:
         if XSS_SCRIPT_CANARY in resp.text and XSS_SCRIPT_CANARY not in baseline_text:
             return CanonicalFinding(
                 source="DAST",
-                scanner_name="gordon-dast-phase-a",
+                scanner_name="cyberforge-dast-phase-a",
                 cwe="CWE-79",
                 title="Reflected Cross-Site Scripting (Unescaped Script Canary)",
                 severity="High",
@@ -750,7 +750,7 @@ class DASTScanner:
                 phase="Phase-A-Active",
             )
 
-        # Also check attribute-context breakout (`" autofocus onfocus="gordon_canary_79`)
+        # Also check attribute-context breakout (`" autofocus onfocus="cyberforge_canary_79`)
         resp_attr, attr_url = await self._send_probe(
             client, route, param_name, param_source, XSS_ATTR_CANARY, semaphore
         )
@@ -758,7 +758,7 @@ class DASTScanner:
             if XSS_ATTR_CANARY in resp_attr.text and XSS_ATTR_CANARY not in baseline_text:
                 return CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-a",
+                    scanner_name="cyberforge-dast-phase-a",
                     cwe="CWE-79",
                     title="Reflected Cross-Site Scripting (Unescaped Attribute Breakout)",
                     severity="High",
@@ -785,7 +785,7 @@ class DASTScanner:
     ) -> Optional[CanonicalFinding]:
         """
         Phase A Check for CWE-601 (Open Redirect):
-          Uses `SAFE_OPEN_REDIRECT_CANARY_URL` (`https://gordon-redirect-canary.invalid/verify`)
+          Uses `SAFE_OPEN_REDIRECT_CANARY_URL` (`https://cyberforge-redirect-canary.invalid/verify`)
           with `follow_redirects=False` so no external request is ever made.
         """
         resp, req_url = await self._send_probe(
@@ -800,14 +800,17 @@ class DASTScanner:
             return None
 
         location = resp.headers.get("location", "").strip()
-        if resp.status_code in (301, 302, 303, 307, 308) and (
-            location.startswith("https://gordon-redirect-canary.invalid")
-            or location.startswith("http://gordon-redirect-canary.invalid")
-            or location.startswith("//gordon-redirect-canary.invalid")
+        if resp.status_code in (301, 302, 303, 307, 308) and any(
+            location.startswith(prefix)
+            for prefix in (
+                "https://cyberforge-redirect-canary.invalid",
+                "http://cyberforge-redirect-canary.invalid",
+                "//cyberforge-redirect-canary.invalid",
+            )
         ):
             return CanonicalFinding(
                 source="DAST",
-                scanner_name="gordon-dast-phase-a",
+                scanner_name="cyberforge-dast-phase-a",
                 cwe="CWE-601",
                 title="Open Redirect to External Domain",
                 severity="Medium",
@@ -843,7 +846,7 @@ class DASTScanner:
                 if sig.search(resp.text) and not sig.search(baseline_text):
                     return CanonicalFinding(
                         source="DAST",
-                        scanner_name="gordon-dast-phase-a",
+                        scanner_name="cyberforge-dast-phase-a",
                         cwe="CWE-22",
                         title="Path Traversal / Arbitrary File Read",
                         severity="High",
@@ -880,7 +883,7 @@ class DASTScanner:
                 if f"echo {CMD_ECHO_CANARY_TOKEN}" not in resp.text:
                     return CanonicalFinding(
                         source="DAST",
-                        scanner_name="gordon-dast-phase-a",
+                        scanner_name="cyberforge-dast-phase-a",
                         cwe="CWE-78",
                         title="OS Command Injection (Canary Output Confirmed)",
                         severity="Critical",
@@ -929,7 +932,7 @@ class DASTScanner:
             passive_findings.append(
                 CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-b",
+                    scanner_name="cyberforge-dast-phase-b",
                     cwe="CWE-693",
                     title="Missing Content-Security-Policy (CSP) Header",
                     severity="Medium",
@@ -951,7 +954,7 @@ class DASTScanner:
             passive_findings.append(
                 CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-b",
+                    scanner_name="cyberforge-dast-phase-b",
                     cwe="CWE-1021",
                     title="Missing Anti-Clickjacking Header (X-Frame-Options)",
                     severity="Medium",
@@ -972,7 +975,7 @@ class DASTScanner:
             passive_findings.append(
                 CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-b",
+                    scanner_name="cyberforge-dast-phase-b",
                     cwe="CWE-693",
                     title="Missing X-Content-Type-Options: nosniff Header",
                     severity="Low",
@@ -993,7 +996,7 @@ class DASTScanner:
             passive_findings.append(
                 CanonicalFinding(
                     source="DAST",
-                    scanner_name="gordon-dast-phase-b",
+                    scanner_name="cyberforge-dast-phase-b",
                     cwe="CWE-693",
                     title="Missing Strict-Transport-Security (HSTS) Header",
                     severity="Low",
@@ -1038,7 +1041,7 @@ class DASTScanner:
                         passive_findings.append(
                             CanonicalFinding(
                                 source="DAST",
-                                scanner_name="gordon-dast-phase-b",
+                                scanner_name="cyberforge-dast-phase-b",
                                 cwe="CWE-614",
                                 title=f"Session Cookie `{cookie_name}` Missing Security Flags ({', '.join(missing_attrs)})",
                                 severity="Medium",
@@ -1063,7 +1066,7 @@ class DASTScanner:
                     passive_findings.append(
                         CanonicalFinding(
                             source="DAST",
-                            scanner_name="gordon-dast-phase-b",
+                            scanner_name="cyberforge-dast-phase-b",
                             cwe="CWE-942",
                             title="Overly Permissive Cross-Origin Resource Sharing (CORS Wildcard `*`)",
                             severity="Medium",
@@ -1090,7 +1093,7 @@ class DASTScanner:
                     passive_findings.append(
                         CanonicalFinding(
                             source="DAST",
-                            scanner_name="gordon-dast-phase-b",
+                            scanner_name="cyberforge-dast-phase-b",
                             cwe="CWE-200",
                             title=f"Verbose Server / Framework Version Disclosure (`{hdr_name}`)",
                             severity="Low",

@@ -853,6 +853,11 @@ class DatabaseStore:
                 "fixed_count": len(fixed_list),
                 "still_open_count": len(still_open_list),
             },
+            "counts": {
+                "new": len(new_list),
+                "fixed": len(fixed_list),
+                "still_open": len(still_open_list),
+            },
             "new_issues": new_list,
             "fixed_issues": fixed_list,
             "still_open_issues": still_open_list,

@@ -69,7 +69,7 @@ DEFAULT_ALLOWED_HOSTS: FrozenSet[str] = frozenset(
 ALLOWED_HOSTS: Set[str] = set(DEFAULT_ALLOWED_HOSTS)
 
 # Canary redirect target used for CWE-601 Open Redirect checks (RFC 2606 reserved .invalid TLD)
-SAFE_OPEN_REDIRECT_CANARY_URL: str = "https://gordon-redirect-canary.invalid/verify"
+SAFE_OPEN_REDIRECT_CANARY_URL: str = "https://cyberforge-redirect-canary.invalid/verify"
 
 # Supported CWE IDs in this flagship challenge
 SUPPORTED_CWES: List[str] = [
@@ -122,8 +122,8 @@ CWE_BASE_SEVERITY: Dict[str, Tuple[str, float]] = {
 
 
 def get_allowed_hosts() -> FrozenSet[str]:
-    """Return the set of allowed target hostnames, optionally extended via GORDON_ALLOWED_HOSTS."""
-    extra_raw = os.getenv("GORDON_ALLOWED_HOSTS", "")
+    """Return the set of allowed target hostnames, optionally extended via CYBERFORGE_ALLOWED_HOSTS."""
+    extra_raw = os.getenv("CYBERFORGE_ALLOWED_HOSTS", "")
     if not extra_raw.strip():
         return DEFAULT_ALLOWED_HOSTS
     extra = {h.strip().lower() for h in extra_raw.split(",") if h.strip()}
@@ -148,7 +148,7 @@ def is_local_or_docker_host(hostname: Optional[str]) -> bool:
         if ip_obj.is_loopback:
             return True
         # Allow RFC1918 172.16.0.0/12 Docker bridge networks only when running inside Docker
-        if os.getenv("GORDON_IN_DOCKER", "").lower() in ("1", "true", "yes"):
+        if os.getenv("CYBERFORGE_IN_DOCKER", "").lower() in ("1", "true", "yes"):
             if ip_obj in ipaddress.ip_network("172.16.0.0/12"):
                 return True
         return False
@@ -243,7 +243,7 @@ async def _enforce_request_scope_hook(request: httpx.Request) -> None:
     host = request.url.host
     if not is_local_or_docker_host(host):
         raise TargetScopeViolationError(
-            f"Outbound HTTP request to '{request.url}' blocked by GORDON Target Safety Lock (host='{host}')."
+            f"Outbound HTTP request to '{request.url}' blocked by CYBERFORGE Target Safety Lock (host='{host}')."
         )
 
 
@@ -263,7 +263,7 @@ def create_safe_async_client(
     # Force follow_redirects=False regardless of extra_kwargs
     extra_kwargs.pop("follow_redirects", None)
     default_headers = {
-        "User-Agent": "GordonCorrelate-LocalVerifier/1.0 (Mitigata-CyberForge-SafeScope)",
+        "User-Agent": "CyberForgeCorrelate-LocalVerifier/1.0 (Mitigata-CyberForge-SafeScope)",
         "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
     }
     if headers:

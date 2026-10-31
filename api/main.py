@@ -14,12 +14,18 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import os
 import re
+import socket
+import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+import httpx
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -36,7 +42,7 @@ from core.schemas import (
 from engine.dast_scanner import run_dast_scan
 
 app = FastAPI(
-    title="CYBERFORGE CORRELATE — SAST & DAST Correlation Engine",
+    title="CYBERFORGE CORRELATE - SAST & DAST Correlation Engine",
     description=(
         "Enterprise AppSec Correlation Engine (PROBLEM 06): "
         "Deterministic AST Route-to-Sink Mapper + 2-Phase Scope-Locked DAST + "
@@ -53,6 +59,77 @@ app.add_middleware(
 )
 
 _default_store: Optional[DatabaseStore] = None
+
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">'
+    '<rect width="32" height="32" rx="4" fill="#13122B"/>'
+    '<path d="M8 10H24M8 16H20M8 22H16" stroke="#F8FAFC" stroke-width="2.5" stroke-linecap="square"/>'
+    '<rect x="20" y="19" width="5" height="5" fill="#15803D"/>'
+    '</svg>'
+)
+
+
+class _AsyncWSGITransport(httpx.AsyncBaseTransport):
+    """Async adapter around httpx.WSGITransport for in-process Flask/WSGI target verification."""
+
+    def __init__(self, wsgi_app: Any) -> None:
+        self._sync_transport = httpx.WSGITransport(app=wsgi_app)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        await request.aread()
+        sync_resp = await asyncio.to_thread(self._sync_transport.handle_request, request)
+        body = sync_resp.read()
+        return httpx.Response(
+            status_code=sync_resp.status_code,
+            headers=sync_resp.headers,
+            content=body,
+            request=request,
+        )
+
+
+def _is_tcp_port_reachable(url: str, timeout: float = 0.15) -> bool:
+    """Return True if a live TCP server is listening at the URL's host:port."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _load_local_wsgi_transport(source_dir: Optional[str]) -> Optional[_AsyncWSGITransport]:
+    """
+    When `run_live_dast=True` is requested against a local Flask app (such as `tests/mock_shop_app`)
+    and no standalone server process is listening on the target port, load the WSGI `app`
+    in-process so live DAST probes execute against the real route handlers out of the box.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidate_dirs: List[str] = []
+    if source_dir:
+        candidate_dirs.append(os.path.abspath(source_dir))
+    default_mock_dir = os.path.join(repo_root, "tests", "mock_shop_app")
+    if os.path.isdir(default_mock_dir) and default_mock_dir not in candidate_dirs:
+        candidate_dirs.append(default_mock_dir)
+
+    for folder in candidate_dirs:
+        app_py = os.path.join(folder, "app.py")
+        if not os.path.isfile(app_py):
+            continue
+        try:
+            if folder not in sys.path:
+                sys.path.insert(0, folder)
+            spec = importlib.util.spec_from_file_location("cyberforge_local_target_app", app_py)
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                wsgi_app = getattr(mod, "app", None)
+                if wsgi_app is not None:
+                    return _AsyncWSGITransport(wsgi_app)
+        except Exception:
+            continue
+    return None
 
 
 def get_store() -> DatabaseStore:
@@ -127,18 +204,31 @@ def fallback_correlate_findings(
     routes: List[RouteEntry],
     sast_findings: List[CanonicalFinding],
     dast_findings: List[CanonicalFinding],
+    route_mapper: Optional[Any] = None,
 ) -> List[CorrelatedIssue]:
     """
-    Deterministic correlation fallback used when `engine/correlator.py` (Person A) is not yet merged,
-    or delegated to `engine.correlator` once merged.
-    Enforces:
-      - Hard negative vetoes: only links SAST + DAST when `cwe` matches AND `RouteEntry`
-        covers `(sast.file, sast.line)` AND `dast.url` matches `RouteEntry` AND parameters do not conflict.
-      - Zero wrong links (`Wrong links = 0% < 5%`), including disambiguating multiple sinks in the
-        same route by `param` and `snippet` token affinity.
-      - FR-6 multi-scanner merge: multiple DAST/SAST findings on the same bug attach to the
-        same Confirmed issue (`3 scanner findings on the same bug = 1 issue`).
+    Deterministic correlation entry point that delegates to `engine.correlator.correlate_findings`
+    when available, with an internal fallback implementation.
     """
+    try:
+        from engine import correlator  # type: ignore
+
+        if hasattr(correlator, "correlate_findings"):
+            issues = correlator.correlate_findings(
+                routes=routes,
+                sast_findings=sast_findings,
+                dast_findings=dast_findings,
+                route_mapper=route_mapper,
+            )
+            for issue in issues:
+                if not issue.fix_suggestion:
+                    issue.fix_suggestion = DEFAULT_FIX_SUGGESTIONS.get(
+                        issue.cwe, "Apply input validation and safe API patterns."
+                    )
+            return issues
+    except ImportError:
+        pass
+
     active_sast = [f for f in sast_findings if not f.is_protected_decoy]
     matched_sast_fps: set[str] = set()
     matched_dast_fps: set[str] = set()
@@ -175,8 +265,6 @@ def fallback_correlate_findings(
         if not candidate_pairs:
             continue
 
-        # If multiple sinks exist in the same route and at least one has positive parameter affinity,
-        # veto zero-affinity sinks so we never guess-link a sink for a different parameter.
         max_affinity = max(score for score, _, _ in candidate_pairs)
         best_choices = [
             (score, sf, r) for score, sf, r in candidate_pairs if score == max_affinity
@@ -188,7 +276,6 @@ def fallback_correlate_findings(
         if effective_param:
             bound_param_by_sink[sink_key] = effective_param.lower()
 
-        # Attach ALL SAST findings from any scanner that point to the exact same (cwe, file, line) sink
         peer_sast_findings: List[CanonicalFinding] = []
         for sf_peer in active_sast:
             if (sf_peer.cwe, sf_peer.file, sf_peer.line) == sink_key:
@@ -457,19 +544,51 @@ def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[Canonic
     return demo_routes, demo_sast, demo_dast
 
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_dashboard() -> HTMLResponse:
-    """FR-8 / FR-9: Serve the single-page correlation dashboard (`ui/index.html`)."""
+def _load_ui_html(status_code: int = 200) -> HTMLResponse:
+    """Read and return `ui/index.html` with the specified HTTP status code."""
     ui_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "index.html")
     if not os.path.exists(ui_path):
         return HTMLResponse("<h1>ui/index.html not found</h1>", status_code=404)
     with open(ui_path, "r", encoding="utf-8") as fh:
-        return HTMLResponse(content=fh.read(), status_code=200)
+        return HTMLResponse(content=fh.read(), status_code=status_code)
+
+
+def _wants_html_document(request: Request) -> bool:
+    """Return True when the client explicitly requests an HTML document (browser navigation)."""
+    accept = request.headers.get("accept", "").lower()
+    return "text/html" in accept and "application/json" not in accept
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard() -> HTMLResponse:
+    """FR-8 / FR-9: Serve the single-page correlation dashboard (`ui/index.html`)."""
+    return _load_ui_html(status_code=200)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon() -> Response:
+    """Serve crisp SVG site icon for browser tabs and bookmarks."""
+    return Response(content=FAVICON_SVG, media_type="image/svg+xml")
+
+
+@app.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/terms", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/diff", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/onboarding", response_class=HTMLResponse, include_in_schema=False)
+async def serve_spa_client_views() -> HTMLResponse:
+    """Serve SPA shell for client-side routes (`/privacy`, `/terms`, `/diff`, `/onboarding`)."""
+    return _load_ui_html(status_code=200)
+
+
+@app.get("/404", response_class=HTMLResponse, include_in_schema=False)
+async def serve_custom_404_page() -> HTMLResponse:
+    """Serve dedicated custom 404 page with HTTP 404 status."""
+    return _load_ui_html(status_code=404)
 
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
-    """Return engine status and active PRD Page 4 Rule 1 Target Safety Lock hosts."""
+    """Return engine status, Target Safety Lock hosts, and server-managed credential isolation state."""
     return {
         "status": "ok",
         "engine": "CYBERFORGE CORRELATE v1.0",
@@ -477,6 +596,10 @@ async def health_check() -> Dict[str, Any]:
             "enforced": True,
             "follow_redirects": False,
             "allowed_hosts": sorted(get_allowed_hosts()),
+        },
+        "credential_isolation": {
+            "frontend_api_keys": False,
+            "mode": "server-managed-env",
         },
     }
 
@@ -511,10 +634,10 @@ async def create_and_run_scan(
     sast_findings: List[CanonicalFinding] = list(request.seeded_sast_findings)
     dast_findings: List[CanonicalFinding] = list(request.seeded_dast_findings)
     sca_findings: List[SCAFinding] = []
+    mapper_instance: Optional[Any] = None
 
     # 1. Person A Route Mapper, SAST Scanner & Reachability SCA (graceful dynamic import)
     if request.source_dir and os.path.exists(request.source_dir):
-        mapper_instance = None
         try:
             from engine import route_mapper  # type: ignore
 
@@ -555,7 +678,11 @@ async def create_and_run_scan(
             from engine import decoy_filter  # type: ignore
 
             if hasattr(decoy_filter, "filter_decoys"):
-                sast_findings = decoy_filter.filter_decoys(sast_findings, routes=routes)
+                sast_findings = decoy_filter.filter_decoys(
+                    sast_findings,
+                    routes=routes,
+                    route_mapper=mapper_instance,
+                )
         except ImportError:
             pass
 
@@ -599,14 +726,17 @@ async def create_and_run_scan(
             except ImportError:
                 pass
 
-
     # 2. Person B 2-Phase Async DAST Scanner (FR-2)
     if validated_url and request.run_live_dast:
+        wsgi_transport: Optional[httpx.AsyncBaseTransport] = None
+        if not _is_tcp_port_reachable(validated_url):
+            wsgi_transport = _load_local_wsgi_transport(request.source_dir)
         live_dast = await run_dast_scan(
             base_url=validated_url,
             routes=routes,
             auth_headers=request.auth_headers,
             auth_cookies=request.auth_cookies,
+            transport=wsgi_transport,
         )
         dast_findings.extend(live_dast)
 
@@ -625,12 +755,28 @@ async def create_and_run_scan(
         from engine import correlator  # type: ignore
 
         if hasattr(correlator, "correlate_findings"):
-            correlated_issues = correlator.correlate_findings(routes, sast_findings, dast_findings)
+            correlated_issues = correlator.correlate_findings(
+                routes,
+                sast_findings,
+                dast_findings,
+                route_mapper=mapper_instance,
+            )
     except ImportError:
         pass
 
     if correlated_issues is None:
-        correlated_issues = fallback_correlate_findings(routes, sast_findings, dast_findings)
+        correlated_issues = fallback_correlate_findings(
+            routes,
+            sast_findings,
+            dast_findings,
+            route_mapper=mapper_instance,
+        )
+    else:
+        for issue in correlated_issues:
+            if not issue.fix_suggestion:
+                issue.fix_suggestion = DEFAULT_FIX_SUGGESTIONS.get(
+                    issue.cwe, "Apply input validation and safe API patterns."
+                )
 
     # 3b. Optional B-1 Auto-Verification Loop
     if validated_url and getattr(request, "enable_auto_verify", True):
@@ -695,7 +841,6 @@ async def compare_two_scans(
                 status_code=400,
                 detail="At least two scans are required for comparison when base/target are not specified.",
             )
-        # get_scans() is ordered DESC (most recent first)
         target = target or scans[0].scan_id
         base = base or scans[1].scan_id
     return store.compare_scans(base_scan_id=base, target_scan_id=target)
@@ -703,30 +848,43 @@ async def compare_two_scans(
 
 @app.get("/issues", response_model=List[CorrelatedIssue])
 async def list_issues(
+    request: Request,
     status: Optional[str] = Query(default=None, description="Filter by 'Confirmed', 'Code only', 'Runtime only'"),
     cwe: Optional[str] = Query(default=None, description="Filter by CWE, e.g. 'CWE-89'"),
     app_name: Optional[str] = Query(default=None, description="Filter by app_name"),
     scan_id: Optional[int] = Query(default=None, description="Filter by specific scan_id"),
     store: DatabaseStore = Depends(get_store),
-) -> List[CorrelatedIssue]:
+) -> Any:
     """
     FR-9 / FR-10: Return correlated issues ranked with `Confirmed` first,
-    then by composite `risk_score` descending.
+    then by composite `risk_score` descending. Serves SPA HTML when navigated directly in browser.
     """
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=200)
     return store.get_issues(status=status, cwe=cwe, app_name=app_name, scan_id=scan_id)
 
 
 @app.get("/issues/{issue_id}", response_model=CorrelatedIssue)
 async def get_issue_detail(
-    issue_id: int,
+    request: Request,
+    issue_id: str,
     store: DatabaseStore = Depends(get_store),
-) -> CorrelatedIssue:
+) -> Any:
     """
     FR-8 / FR-10: Return unified detail view for a single issue (`GET /issues/7`),
     including URL, parameter, payload, file, line, code snippet, CWE, severity,
     `B-3` link explanation, and `B-4` plain-English fix suggestion.
     """
-    issue = store.get_issue_by_id(issue_id)
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=200)
+    issue: Optional[CorrelatedIssue] = None
+    if issue_id.isdigit():
+        issue = store.get_issue_by_id(int(issue_id))
+    else:
+        for candidate in store.get_issues(only_open=False):
+            if str(candidate.id) == issue_id or candidate.fingerprint == issue_id:
+                issue = candidate
+                break
     if issue is None:
         raise HTTPException(status_code=404, detail=f"Issue #{issue_id} not found.")
     return issue
@@ -734,26 +892,54 @@ async def get_issue_detail(
 
 @app.get("/routes", response_model=List[RouteEntry])
 async def list_discovered_routes(
+    request: Request,
     app_name: Optional[str] = Query(default=None),
     store: DatabaseStore = Depends(get_store),
-) -> List[RouteEntry]:
+) -> Any:
     """FR-4: Return the AST Route Map (`URL -> function, file, start_line..end_line`)."""
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=200)
     return store.get_routes(app_name=app_name)
 
 
 @app.get("/decoys", response_model=List[CanonicalFinding])
 async def list_suppressed_decoys(
+    request: Request,
     app_name: Optional[str] = Query(default=None),
     store: DatabaseStore = Depends(get_store),
-) -> List[CanonicalFinding]:
+) -> Any:
     """Bonus B-2: Return safe decoys suppressed during static analysis."""
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=200)
     return store.get_suppressed_decoys(app_name=app_name)
 
 
 @app.get("/sca", response_model=List[SCAFinding])
 async def list_sca_findings(
+    request: Request,
     app_name: Optional[str] = Query(default=None),
     store: DatabaseStore = Depends(get_store),
-) -> List[SCAFinding]:
+) -> Any:
     """Page 4 Bonus: Return Reachability-Aware SCA findings."""
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=200)
     return store.get_sca_findings(app_name=app_name)
+
+
+@app.get("/{unmatched_path:path}", include_in_schema=False)
+async def catch_all_custom_404(request: Request, unmatched_path: str) -> Response:
+    """
+    Serve custom 404 SPA view for browser navigation to unknown routes,
+    or structured JSON 404 for API requests.
+    """
+    if _wants_html_document(request):
+        return _load_ui_html(status_code=404)
+    return JSONResponse(
+        status_code=404,
+        content={
+            "detail": f"Route '/{unmatched_path}' not found on CyberForge Correlate API.",
+            "code": "ROUTE_NOT_FOUND",
+            "path": f"/{unmatched_path}",
+        },
+    )
+

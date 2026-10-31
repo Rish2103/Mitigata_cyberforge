@@ -421,8 +421,8 @@ class CanonicalFinding(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source: FindingSource = Field(..., description="'SAST', 'DAST', or 'SCA'")
     scanner_name: str = Field(
-        default="gordon-native",
-        description="Originating scanner (e.g. 'gordon-sast', 'gordon-dast', 'semgrep', 'bandit')",
+        default="cyberforge-native",
+        description="Originating scanner (e.g. 'cyberforge-sast', 'cyberforge-dast', 'semgrep', 'bandit')",
     )
     cwe: str = Field(..., description="Normalized CWE identifier, e.g. 'CWE-89'")
     title: str = Field(default="", description="Short human-readable vulnerability title")
@@ -531,7 +531,7 @@ class CanonicalFinding(BaseModel):
             raw = "|".join(
                 [
                     "SAST",
-                    (self.scanner_name or "gordon-native").strip().lower(),
+                    (self.scanner_name or "cyberforge-native").strip().lower(),
                     self.cwe,
                     normalize_file_path(self.file or self.file_path),
                     str(self.line or 0),
@@ -543,7 +543,7 @@ class CanonicalFinding(BaseModel):
             raw = "|".join(
                 [
                     src_val,
-                    (self.scanner_name or "gordon-native").strip().lower(),
+                    (self.scanner_name or "cyberforge-native").strip().lower(),
                     self.cwe,
                     (self.method or "GET").upper(),
                     self.canonical_path or extract_url_path(self.url or "/"),

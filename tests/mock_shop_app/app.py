@@ -20,7 +20,8 @@ from flask import Flask, request, redirect, render_template, render_template_str
 from werkzeug.utils import secure_filename
 from routes.orders import orders_bp
 
-app = Flask(__name__)
+TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
 # Planted Code-Only Bug 1 (CWE-798): Hard-coded production secret
 STRIPE_LIVE_SECRET_KEY = "sk_live_998877665544332211_mitigata_shop"
@@ -184,3 +185,7 @@ def dead_unreachable_helper_in_active_file(raw_id):
     # Safe Decoy (B-2 Dead Function inside active file): Never called by any route!
     conn = sqlite3.connect("shop.db")
     conn.execute(f"SELECT * FROM archived_orders WHERE id = {raw_id}")
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000)
