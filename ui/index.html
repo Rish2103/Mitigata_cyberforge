@@ -1038,6 +1038,7 @@
       <div class="topbar-controls">
         <div class="topbar-group">
           <a class="btn" id="btnOpenLiveShop" href="http://localhost:5000" target="_blank" rel="noopener noreferrer" title="Open Live Vulnerable Storefront on port 5000">Live Storefront (:5000)</a>
+          <a class="btn" id="btnOpenUnseenPortal" href="http://127.0.0.1:5001" target="_blank" rel="noopener noreferrer" title="Open Unseen Billing Portal on port 5001">Unseen Portal (:5001)</a>
           <button type="button" class="btn" id="btnOpenGuide" onclick="openOnboardingModal()">System Guide</button>
         </div>
         <span class="topbar-divider" aria-hidden="true"></span>
@@ -1213,17 +1214,18 @@
           <option value="NeedsVerification">NeedsVerification (Code + Runtime)</option>
         </select>
         <select id="selectCweFilter" class="field-select" onchange="renderIssuesTable()">
-          <option value="ALL">All CWEs</option>
-          <option value="89">CWE-89 (SQLi)</option>
-          <option value="79">CWE-79 (XSS)</option>
-          <option value="78">CWE-78 (Cmdi)</option>
-          <option value="22">CWE-22 (Path Traversal)</option>
-          <option value="601">CWE-601 (Open Redirect)</option>
-          <option value="798">CWE-798 (Hard-Coded Secret)</option>
-          <option value="693">CWE-693 (Security Header)</option>
-          <option value="1021">CWE-1021 (Clickjacking)</option>
-          <option value="614">CWE-614 (Cookie Flag)</option>
-          <option value="942">CWE-942 (CORS Wildcard)</option>
+          <option value="ALL">All CWEs (All Vulnerability Classes)</option>
+          <option value="89">CWE-89 : SQL Injection (Database Query Tampering)</option>
+          <option value="79">CWE-79 : Cross-Site Scripting / XSS (Script Injection)</option>
+          <option value="78">CWE-78 : OS Command Injection (Server Shell Execution)</option>
+          <option value="22">CWE-22 : Path Traversal (Unauthorized File Read)</option>
+          <option value="601">CWE-601 : Open Redirect (Untrusted URL Redirection)</option>
+          <option value="798">CWE-798 : Hard-Coded Secret (Embedded API Key / Password)</option>
+          <option value="693">CWE-693 : Missing Security Headers (CSP / HSTS / Nosniff)</option>
+          <option value="1021">CWE-1021 : Clickjacking Risk (Missing X-Frame-Options)</option>
+          <option value="614">CWE-614 : Insecure Cookie (Missing HttpOnly / Secure Flag)</option>
+          <option value="200">CWE-200 : Information Exposure (Verbose Server Banner)</option>
+          <option value="942">CWE-942 : Permissive CORS Policy (Wildcard Origin)</option>
         </select>
       </div>
     </div>
@@ -1233,9 +1235,22 @@
       <div class="panel-header">
         <div>
           <div class="panel-title">Correlated Vulnerability Truth Table</div>
-          <div class="panel-subtitle">Deterministic join across AST route signatures, SAST sinks, and 2-phase DAST verification</div>
+          <div class="panel-subtitle">Deterministic join across AST route signatures, SAST sinks, and 2-phase DAST verification (Click any row for Plain-English CWE Guide &amp; Proof)</div>
         </div>
-        <div id="issuesSummaryCount" style="font-family:var(--font-mono); font-size:12px; color:var(--text-secondary);">0 issues shown</div>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="btn" id="btnToggleCweGuide" onclick="toggleCweReferenceGuide()">CWE Plain-English Guide</button>
+          <div id="issuesSummaryCount" style="font-family:var(--font-mono); font-size:12px; color:var(--text-secondary);">0 issues shown</div>
+        </div>
+      </div>
+      <div id="cweQuickReferenceDrawer" style="display:none; padding:14px 18px; border-bottom:1px solid var(--border-subtle); background:var(--bg-surface-muted);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <div style="font-weight:600; font-size:13.5px; color:var(--text-primary);">Beginner-Friendly CWE Vulnerability Reference Guide</div>
+            <div style="font-size:12px; color:var(--text-secondary);">What each CWE code means in plain English, why it is dangerous, and how to fix it. Click any card to filter the table below.</div>
+          </div>
+          <button type="button" class="btn" onclick="filterByCweCode('ALL')">Show All CWEs</button>
+        </div>
+        <div id="cweReferenceGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;"></div>
       </div>
       <div class="table-scroll">
         <table class="data-table">
@@ -1847,8 +1862,177 @@
       document.getElementById('tabCountSca').textContent = String(appState.scaFindings.length);
     }
 
-    function updateScopeReductionAndCiGate(ciGateRes) {
-      const latestScan = appState.scans && appState.scans.length > 0 ? appState.scans[0] : null;
+    const CWE_KNOWLEDGE_BASE = {
+      'CWE-89': {
+        code: 'CWE-89',
+        shortName: 'SQL Injection',
+        friendlyTitle: 'SQL Injection (Database Query Tampering)',
+        oneLiner: 'User input is pasted directly into a database SQL query, letting attackers read or alter private records.',
+        simpleExplanation: 'When an application builds a database query by concatenating raw text from a URL parameter or form field (such as an order ID or account number) instead of using safe placeholders, an attacker can type special SQL characters like a single quote (\') to rewrite the database command itself.',
+        howAttackWorks: 'By sending a payload such as 1\' OR \'1\'=\'1, the attacker forces the SQL WHERE condition to evaluate to TRUE for every row in the table, or triggers a database syntax error that confirms the query structure is directly controllable.',
+        realWorldImpact: 'Attackers can dump entire customer tables, view other users\' invoices and settlements, bypass login screens, or modify financial balances. Triggers mandatory breach reporting under DPDP Act 2023 and SEBI CSCRF.',
+        howToFixSimple: 'Never use Python f-strings, + concatenation, or .format() inside SQL execute() calls. Always pass user values as a separate tuple of bind parameters using ? or %s placeholders so the database treats input strictly as data, never as executable SQL commands.'
+      },
+      'CWE-79': {
+        code: 'CWE-79',
+        shortName: 'Cross-Site Scripting (XSS)',
+        friendlyTitle: 'Cross-Site Scripting / XSS (Browser Script Injection)',
+        oneLiner: 'Unescaped user input is echoed back into an HTML page, allowing attackers to run malicious JavaScript in victims\' browsers.',
+        simpleExplanation: 'When a web page takes text from a user (like a search query or billing memo) and inserts it straight into the HTML response without converting special characters like < and >, the victim\'s browser mistakes the user input for executable <script> code.',
+        howAttackWorks: 'An attacker crafts a link containing <script> or an HTML event handler in the query parameter. When a logged-in user clicks the link, the server reflects the raw script back into the page and the browser executes it inside the victim\'s session.',
+        realWorldImpact: 'Attackers can steal session cookies, hijack logged-in customer or admin accounts, deface the portal, or silently submit unauthorized transactions on behalf of the user.',
+        howToFixSimple: 'Always HTML-escape untrusted variables before rendering (for example using html.escape(val) or markupsafe.escape(val)), or use auto-escaping Jinja2 templates (render_template) instead of raw string concatenation.'
+      },
+      'CWE-78': {
+        code: 'CWE-78',
+        shortName: 'OS Command Injection',
+        friendlyTitle: 'OS Command Injection (Server Shell Takeover)',
+        oneLiner: 'User input is passed into a system shell command, allowing attackers to execute arbitrary operating system commands on the server.',
+        simpleExplanation: 'The application runs a system utility (like ping or a network diagnostic script) by passing a string containing user input to a system shell (os.popen, os.system, or subprocess with shell=True). Because the shell interprets characters like &, ;, and | as command separators, an attacker can chain their own OS commands onto the end.',
+        howAttackWorks: 'Instead of sending just an IP address like 127.0.0.1, the attacker sends 127.0.0.1 & whoami. The server runs the ping command and immediately executes the second command with the web server\'s privileges.',
+        realWorldImpact: 'Complete server compromise (Remote Code Execution). An attacker can read source code and environment secrets, pivot into internal private networks, install backdoors, or wipe server data.',
+        howToFixSimple: 'Never use os.system(), os.popen(), or shell=True with user input. Pass the command and arguments as a Python list to subprocess.run(["ping", "-c", "1", host], shell=False) so the OS executes the binary directly without invoking a command shell.'
+      },
+      'CWE-22': {
+        code: 'CWE-22',
+        shortName: 'Path Traversal',
+        friendlyTitle: 'Path Traversal (Unauthorized Server File Read)',
+        oneLiner: 'User input in a file path allows dot-dot-slash (../) sequences to escape the intended folder and read sensitive server files.',
+        simpleExplanation: 'When a download endpoint lets users specify a filename (like ?doc=receipt_101.txt) and joins it directly to a folder path without checking where the final path points, an attacker can use ../ to climb up out of the downloads folder into the root filesystem.',
+        howAttackWorks: 'By requesting ?doc=../../../../etc/passwd or ..\\..\\..\\windows\\win.ini, the file reader steps backward out of the application directory and returns private system or configuration files.',
+        realWorldImpact: 'Attackers can download application source code, database files, .env credentials, SSH keys, or operating system configuration files.',
+        howToFixSimple: 'Strip directory segments with werkzeug.utils.secure_filename(doc), resolve the canonical path using os.path.realpath(), and verify that safe_path.startswith(os.path.realpath(BASE_DIR)) before opening the file.'
+      },
+      'CWE-601': {
+        code: 'CWE-601',
+        shortName: 'Open Redirect',
+        friendlyTitle: 'Open Redirect (Untrusted External URL Redirection)',
+        oneLiner: 'The application redirects users to any URL supplied in a query parameter, enabling convincing phishing attacks.',
+        simpleExplanation: 'After login, checkout, or portal navigation, web apps often use a parameter like ?next=/dashboard or ?url=/home to send the user to their next page. If the server does not verify that the destination belongs to its own domain, an attacker can set the parameter to an external malicious site.',
+        howAttackWorks: 'An attacker sends a victim a link starting with your trusted domain (for example https://your-bank.example/return?next_url=https://evil-phishing.org). The victim trusts the domain name in the link, clicks it, and is silently bounced to a fake login page.',
+        realWorldImpact: 'Facilitates high-conversion credential phishing, OAuth token leakage via Referer headers, and brand trust abuse.',
+        howToFixSimple: 'Parse the target URL with urllib.parse.urlparse(target) and verify that parsed.scheme and parsed.netloc are empty (relative path starting with /) or match an explicit allowlist of trusted internal hostnames.'
+      },
+      'CWE-798': {
+        code: 'CWE-798',
+        shortName: 'Hard-Coded Secret',
+        friendlyTitle: 'Use of Hard-Coded Credentials (Embedded API Key / Secret)',
+        oneLiner: 'Production API keys, JWT signing secrets, or passwords are written directly inside the source code instead of environment variables.',
+        simpleExplanation: 'Developers sometimes paste live payment gateway keys (like sk_live_...), JWT signing secrets, or database passwords directly into Python or JavaScript source files. Note: This is a Code-Only vulnerability because the secret lives in the source file rather than being triggered by a single HTTP parameter.',
+        howAttackWorks: 'Anyone who gains read access to the Git repository, container image, backup archive, or a Path Traversal bug can extract the live secret key and impersonate the application.',
+        realWorldImpact: 'Unauthorized access to payment gateways (Stripe/Razorpay), ability to forge valid admin JWT authentication tokens, and full compromise of third-party cloud services.',
+        howToFixSimple: 'Remove all literal secrets from source code, rotate the compromised key immediately, and load credentials at runtime from environment variables (os.environ.get("SECRET_KEY")) or a dedicated secrets manager.'
+      },
+      'CWE-693': {
+        code: 'CWE-693',
+        shortName: 'Missing Security Headers',
+        friendlyTitle: 'Protection Mechanism Failure (Missing HTTP Security Headers)',
+        oneLiner: 'HTTP responses omit defense-in-depth browser headers like Content-Security-Policy (CSP) or X-Content-Type-Options.',
+        simpleExplanation: 'Modern browsers include built-in security shields that block unauthorized script execution and MIME-type spoofing, but the server must activate them by sending HTTP response headers like Content-Security-Policy and X-Content-Type-Options: nosniff.',
+        howAttackWorks: 'Without these headers, if an attacker finds any content injection point or uploads a disguised file, the browser has no policy restricting where scripts can load from or preventing MIME sniffing.',
+        realWorldImpact: 'Increases the blast radius of Cross-Site Scripting (XSS) and content-injection attacks across all pages of the web application.',
+        howToFixSimple: 'Add an HTTP response middleware (@app.after_request) that sets Content-Security-Policy: default-src \'self\', X-Content-Type-Options: nosniff, and Strict-Transport-Security.'
+      },
+      'CWE-1021': {
+        code: 'CWE-1021',
+        shortName: 'Clickjacking Risk',
+        friendlyTitle: 'Improper Restriction of Rendered UI Layers (Clickjacking)',
+        oneLiner: 'Pages can be embedded inside an invisible <iframe> on an attacker\'s website because X-Frame-Options is missing.',
+        simpleExplanation: 'When a web response does not send the X-Frame-Options: DENY (or CSP frame-ancestors) header, any third-party website can load your application inside a transparent iframe overlaid on top of decoy buttons.',
+        howAttackWorks: 'A victim visits an attacker\'s page and clicks what looks like a harmless button, but their click actually lands on an invisible button inside your framed application (such as "Approve Settlement" or "Delete Account").',
+        realWorldImpact: 'Users can be tricked into authorizing payments, changing account settings, or granting permissions without realizing they are interacting with your portal.',
+        howToFixSimple: 'Set response.headers["X-Frame-Options"] = "DENY" (or "SAMEORIGIN") and include frame-ancestors \'none\' in your Content-Security-Policy header.'
+      },
+      'CWE-614': {
+        code: 'CWE-614',
+        shortName: 'Insecure Cookie Flags',
+        friendlyTitle: 'Sensitive Session Cookie Without Secure / HttpOnly Flags',
+        oneLiner: 'Session cookies are issued without HttpOnly or Secure flags, exposing them to script theft or unencrypted network interception.',
+        simpleExplanation: 'When the server sets a session cookie (Set-Cookie: session_id=...), omitting HttpOnly allows client-side JavaScript (document.cookie) to read it, and omitting Secure allows the cookie to be transmitted over unencrypted HTTP connections.',
+        howAttackWorks: 'If an attacker triggers XSS on any page or intercepts traffic on a shared network, they can read the raw session_id cookie value and replay it to hijack the user\'s logged-in session.',
+        realWorldImpact: 'Full account takeover (Session Hijacking) without needing the user\'s password or 2FA code.',
+        howToFixSimple: 'Always set httponly=True, secure=True, and samesite="Lax" (or "Strict") when calling response.set_cookie() and in Flask SESSION_COOKIE_HTTPONLY / SESSION_COOKIE_SECURE settings.'
+      },
+      'CWE-200': {
+        code: 'CWE-200',
+        shortName: 'Verbose Server Banner',
+        friendlyTitle: 'Information Exposure (Verbose Server Version Header)',
+        oneLiner: 'The HTTP Server header reveals exact framework and Python runtime version numbers (e.g., Werkzeug/3.x Python/3.12).',
+        simpleExplanation: 'By default, development and WSGI servers broadcast their exact software name and version in every HTTP response header. While not directly exploitable on its own, it gives attackers an instant blueprint of your tech stack.',
+        howAttackWorks: 'Automated scanners read the Server: Werkzeug/... Python/... banner to immediately select version-specific exploits and CVEs targeting that exact runtime.',
+        realWorldImpact: 'Speeds up reconnaissance for attackers and fails enterprise production hardening audits.',
+        howToFixSimple: 'Run behind a production reverse proxy (Nginx/ Envoy) with server_tokens off, or strip/override the Server header in your application middleware.'
+      },
+      'CWE-942': {
+        code: 'CWE-942',
+        shortName: 'Permissive CORS Policy',
+        friendlyTitle: 'Overly Permissive Cross-Domain Policy (CORS Wildcard)',
+        oneLiner: 'Access-Control-Allow-Origin allows arbitrary external websites to read responses from this API.',
+        simpleExplanation: 'Cross-Origin Resource Sharing (CORS) controls which external domains are allowed to read API responses in a user\'s browser. Setting Access-Control-Allow-Origin: * (or reflecting untrusted Origin headers with credentials) disables browser origin isolation.',
+        howAttackWorks: 'A malicious website visited by a user makes background fetch() requests to your API and reads sensitive JSON responses directly.',
+        realWorldImpact: 'Cross-domain leakage of private API data, account profile details, or internal tokens.',
+        howToFixSimple: 'Restrict Access-Control-Allow-Origin to an explicit allowlist of trusted frontend domains and never combine wildcard (*) origins with Access-Control-Allow-Credentials: true.'
+      }
+    };
+
+    function getCweGuide(cweRaw) {
+      const code = String(cweRaw || '').toUpperCase().startsWith('CWE-')
+        ? String(cweRaw).toUpperCase()
+        : `CWE-${String(cweRaw || '000').toUpperCase()}`;
+      if (CWE_KNOWLEDGE_BASE[code]) return CWE_KNOWLEDGE_BASE[code];
+      return {
+        code,
+        shortName: 'Application Security Weakness',
+        friendlyTitle: `${code} (Security Vulnerability)`,
+        oneLiner: 'Static or runtime security check identified an unvalidated code path or missing runtime protection.',
+        simpleExplanation: 'This finding indicates that untrusted input reaches a sensitive operation or a runtime security control is missing on the endpoint.',
+        howAttackWorks: 'An attacker can craft requests targeting this route or configuration gap to bypass intended application security boundaries.',
+        realWorldImpact: 'Potential unauthorized data access, integrity violation, or compliance audit failure if left unaddressed.',
+        howToFixSimple: 'Validate and sanitize all user inputs, enforce least-privilege access controls, and apply defense-in-depth HTTP response headers.'
+      };
+    }
+
+    function renderCweReferenceGrid() {
+      const grid = document.getElementById('cweReferenceGrid');
+      if (!grid) return;
+      const featuredCodes = ['CWE-89', 'CWE-79', 'CWE-78', 'CWE-22', 'CWE-601', 'CWE-798', 'CWE-693', 'CWE-1021', 'CWE-614', 'CWE-200'];
+      grid.innerHTML = featuredCodes.map((code) => {
+        const g = getCweGuide(code);
+        const num = code.replace('CWE-', '');
+        return `
+          <div class="evidence-card" style="cursor:pointer; margin:0; padding:10px 12px;" onclick="filterByCweCode('${escapeHtml(num)}')" title="Click to filter table by ${escapeHtml(code)}">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+              <span style="font-family:var(--font-mono); font-weight:700; font-size:12px; color:var(--color-sr-indigo-500);">${escapeHtml(g.code)}</span>
+              <span class="code-tag" style="font-size:10.5px;">${escapeHtml(g.shortName)}</span>
+            </div>
+            <div style="font-size:12px; color:var(--text-primary); font-weight:600; margin-bottom:4px;">${escapeHtml(g.friendlyTitle)}</div>
+            <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.45;">${escapeHtml(g.oneLiner)}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function toggleCweReferenceGuide() {
+      const drawer = document.getElementById('cweQuickReferenceDrawer');
+      if (!drawer) return;
+      const isHidden = drawer.style.display === 'none' || !drawer.style.display;
+      if (isHidden) {
+        renderCweReferenceGrid();
+        drawer.style.display = 'block';
+      } else {
+        drawer.style.display = 'none';
+      }
+    }
+
+    function filterByCweCode(cweNum) {
+      const sel = document.getElementById('selectCweFilter');
+      if (sel) {
+        sel.value = cweNum;
+        renderIssuesTable();
+      }
+    }
+
+    function updateScopeReductionAndCiGate(ciGateRes, targetScanObj = null) {
+      const latestScan = targetScanObj || (appState.scans && appState.scans.length > 0 ? appState.scans[0] : null);
       const sr = latestScan && latestScan.scope_reduction ? latestScan.scope_reduction : null;
 
       const compEl = document.getElementById('complexityFormulaText');
@@ -1967,10 +2151,27 @@
         return;
       }
       try {
-        const issues = await apiFetchJson(`/issues?scan_id=${encodeURIComponent(scanId)}`);
+        const selectedScan = appState.scans.find((s) => String(s.scan_id || s.id) === String(scanId)) || null;
+        const appQuery = selectedScan && selectedScan.app_name
+          ? `?app_name=${encodeURIComponent(selectedScan.app_name)}`
+          : '';
+        const [issues, routesRes, decoysRes, scaRes, ciGateRes] = await Promise.all([
+          apiFetchJson(`/issues?scan_id=${encodeURIComponent(scanId)}`),
+          apiFetchJson(`/routes${appQuery}`).catch(() => appState.routes),
+          apiFetchJson(`/decoys${appQuery}`).catch(() => appState.decoys),
+          apiFetchJson(`/sca${appQuery}`).catch(() => appState.scaFindings),
+          apiFetchJson(`/scans/${encodeURIComponent(scanId)}/ci-gate`).catch(() => null)
+        ]);
         appState.issues = Array.isArray(issues) ? issues : (issues?.issues || []);
+        appState.routes = Array.isArray(routesRes) ? routesRes : (Array.isArray(routesRes?.routes) ? routesRes.routes : []);
+        appState.decoys = Array.isArray(decoysRes) ? decoysRes : (Array.isArray(decoysRes?.decoys) ? decoysRes.decoys : []);
+        appState.scaFindings = Array.isArray(scaRes) ? scaRes : (Array.isArray(scaRes?.sca_findings) ? scaRes.sca_findings : []);
         updateKpiMetrics({}, null);
+        updateScopeReductionAndCiGate(ciGateRes, selectedScan);
         renderIssuesTable();
+        renderRoutesTable(selectedScan);
+        renderDecoysTable();
+        renderScaTable();
       } catch (err) {
         showErrorBanner('Scan Lookup Failed', err.message);
       }
@@ -2013,6 +2214,7 @@
         const normCwe = String(issue.cwe || '').replace(/^CWE-/i, '');
         if (cweFilter !== 'ALL' && normCwe !== String(cweFilter).replace(/^CWE-/i, '')) return false;
         if (searchVal) {
+          const guide = getCweGuide(issue.cwe);
           const hay = [
             issue.title,
             issue.canonical_path,
@@ -2022,7 +2224,10 @@
             issue.file_path,
             issue.func_name,
             issue.param,
-            issue.cwe
+            issue.cwe,
+            guide.shortName,
+            guide.friendlyTitle,
+            guide.oneLiner
           ].join(' ').toLowerCase();
           if (!hay.includes(searchVal)) return false;
         }
@@ -2062,13 +2267,18 @@
         const isSelected = String(appState.selectedIssueId) === String(issue.id);
         const chipClass = normalizeStatusClass(issue.status);
         const cweLabel = String(issue.cwe || '').toUpperCase().startsWith('CWE-') ? issue.cwe : `CWE-${issue.cwe}`;
+        const cweGuide = getCweGuide(cweLabel);
 
         return `
           <tr class="clickable-row ${isSelected ? 'selected-row' : ''}" onclick="navigateTo('/issues/${encodeURIComponent(issue.id)}')">
             <td><span class="status-chip ${escapeHtml(chipClass)}">${escapeHtml(issue.status)}</span></td>
-            <td>
-              <div style="font-weight:600;">${escapeHtml(cweLabel)}</div>
-              <div style="font-size:11.5px; color:var(--text-secondary);">${escapeHtml(issue.severity || 'High')}</div>
+            <td style="max-width:310px;">
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <span style="font-weight:700; font-family:var(--font-mono);">${escapeHtml(cweLabel)}</span>
+                <span style="font-weight:600; color:var(--text-primary);">${escapeHtml(cweGuide.shortName)}</span>
+                <span class="code-tag" style="font-size:10.5px; padding:1px 5px;">${escapeHtml(issue.severity || 'High')}</span>
+              </div>
+              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:3px; line-height:1.35;">${escapeHtml(cweGuide.oneLiner)}</div>
             </td>
             <td><span class="code-tag">${escapeHtml(routeStr)}</span></td>
             <td>
@@ -2085,14 +2295,14 @@
       }).join('');
     }
 
-    function renderRoutesTable() {
+    function renderRoutesTable(targetScanObj = null) {
       const tbody = document.getElementById('routesTableBody');
       if (!tbody) return;
       if (appState.routes.length === 0) {
         tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">No AST Routes Indexed Yet</div><p>Run a correlation scan to extract Flask/FastAPI/Express route signatures.</p></div></td></tr>`;
         return;
       }
-      const latestScan = appState.scans && appState.scans.length > 0 ? appState.scans[0] : null;
+      const latestScan = targetScanObj || (appState.scans && appState.scans.length > 0 ? appState.scans[0] : null);
       const srEntries = latestScan && latestScan.scope_reduction && Array.isArray(latestScan.scope_reduction.route_entries)
         ? latestScan.scope_reduction.route_entries
         : [];
@@ -2142,13 +2352,17 @@
       }
       tbody.innerHTML = appState.decoys.map((d) => {
         const cweLabel = String(d.cwe || '').toUpperCase().startsWith('CWE-') ? d.cwe : `CWE-${d.cwe}`;
+        const cweGuide = getCweGuide(cweLabel);
         const fPath = d.file || d.file_path || '';
         const fLine = d.line || d.line_start || 1;
         const reason = d.decoy_reason || d.suppression_reason || d.evidence || d.reason || 'Verified safe by AST sanitizer guard';
         return `
         <tr>
           <td><span class="status-chip SafeDecoy">Suppressed Decoy</span></td>
-          <td style="font-family:var(--font-mono); font-weight:600;">${escapeHtml(cweLabel)}</td>
+          <td>
+            <div style="font-family:var(--font-mono); font-weight:700;">${escapeHtml(cweLabel)} : ${escapeHtml(cweGuide.shortName)}</div>
+            <div style="font-size:11.5px; color:var(--text-secondary); margin-top:2px;">Protected against ${escapeHtml(cweGuide.friendlyTitle)}</div>
+          </td>
           <td>
             <div><span class="code-tag">${escapeHtml(d.canonical_path || d.route || fPath || 'N/A')}</span></div>
             <div style="font-family:var(--font-mono); font-size:11.5px; color:var(--text-secondary); margin-top:3px;">${escapeHtml(fPath)}:${escapeHtml(fLine)}</div>
@@ -2386,8 +2600,9 @@
       chip.textContent = issue.status || 'Code only';
 
       const cweLabel = String(issue.cwe || '').toUpperCase().startsWith('CWE-') ? issue.cwe : `CWE-${issue.cwe}`;
-      document.getElementById('sheetTitle').textContent = issue.title || `${cweLabel} (${issue.canonical_path || issue.matched_route || issue.file || 'Finding'})`;
-      document.getElementById('sheetSubtitle').textContent = `Fingerprint: ${issue.fingerprint || issue.id} | Merged Findings: ${issue.finding_count || 1}`;
+      const cweGuide = getCweGuide(cweLabel);
+      document.getElementById('sheetTitle').textContent = `${cweGuide.code} : ${cweGuide.friendlyTitle}`;
+      document.getElementById('sheetSubtitle').textContent = `Route: ${issue.canonical_path || issue.matched_route || issue.file || 'Endpoint'} | Fingerprint: ${issue.fingerprint || issue.id} | Merged Findings: ${issue.finding_count || 1}`;
 
       const fPath = issue.file || issue.file_path;
       const fLine = issue.line || issue.line_start || 1;
@@ -2419,13 +2634,34 @@
       const remediationDiffText = buildBeforeAfterRemediationDiff(issue);
 
       document.getElementById('sheetBody').innerHTML = `
+        <div class="evidence-card" style="border-left:3px solid var(--color-sr-indigo-500);">
+          <div class="evidence-card-title">Understanding This Vulnerability : ${escapeHtml(cweGuide.code)} (${escapeHtml(cweGuide.shortName)})</div>
+          <div style="display:grid; gap:8px; font-size:12.5px; line-height:1.5;">
+            <div>
+              <strong style="color:var(--text-primary);">What It Means in Plain English:</strong>
+              <span style="color:var(--text-secondary);"> ${escapeHtml(cweGuide.simpleExplanation)}</span>
+            </div>
+            <div>
+              <strong style="color:var(--text-primary);">How an Attacker Exploits It:</strong>
+              <span style="color:var(--text-secondary);"> ${escapeHtml(cweGuide.howAttackWorks)}</span>
+            </div>
+            <div>
+              <strong style="color:var(--text-primary);">Real-World &amp; Compliance Impact:</strong>
+              <span style="color:var(--text-secondary);"> ${escapeHtml(cweGuide.realWorldImpact)}</span>
+            </div>
+            <div>
+              <strong style="color:var(--text-primary);">How to Fix It Properly:</strong>
+              <span style="color:var(--text-secondary);"> ${escapeHtml(cweGuide.howToFixSimple)}</span>
+            </div>
+          </div>
+        </div>
         <div class="evidence-card">
           <div class="evidence-card-title">Correlation Verdict &amp; Route Binding (B-3)</div>
           <p style="font-size:13px; color:var(--text-primary); margin-bottom:8px;">${escapeHtml(linkReasonText)}</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
             ${autoVerifiedBadge}
             <span class="code-tag">Route: ${escapeHtml(issue.canonical_path || issue.matched_route || 'N/A')}</span>
-            <span class="code-tag">${escapeHtml(cweLabel)}</span>
+            <span class="code-tag">${escapeHtml(cweLabel)} : ${escapeHtml(cweGuide.shortName)}</span>
             <span class="code-tag">Param: ${escapeHtml(issue.param || issue.parameter || 'N/A')}</span>
             <span class="code-tag">Score: ${pct}%</span>
             ${fairLakhs ? `<span class="code-tag">${escapeHtml(fairLakhs)}</span>` : ''}
@@ -2487,14 +2723,21 @@
     function applyScanPreset(presetKey) {
       const urlInput = document.getElementById('inputTargetUrl');
       const dirInput = document.getElementById('inputSourceDir');
+      const btnMock = document.getElementById('btnPresetMockShop');
+      const btnUnseen = document.getElementById('btnPresetUnseenApp');
       if (!urlInput || !dirInput) return;
       if (presetKey === 'unseen_app') {
         urlInput.value = 'http://127.0.0.1:5001';
         dirInput.value = './tests/unseen_app_sim';
+        if (btnUnseen) btnUnseen.classList.add('btn-primary');
+        if (btnMock) btnMock.classList.remove('btn-primary');
       } else {
         urlInput.value = 'http://127.0.0.1:5000';
         dirInput.value = './tests/mock_shop_app';
+        if (btnMock) btnMock.classList.add('btn-primary');
+        if (btnUnseen) btnUnseen.classList.remove('btn-primary');
       }
+      triggerScan(false);
     }
 
     async function triggerScan(silent = false) {
@@ -2503,6 +2746,9 @@
       const targetUrl = (document.getElementById('inputTargetUrl')?.value || 'http://127.0.0.1:5000').trim();
       const sourceDir = (document.getElementById('inputSourceDir')?.value || './tests/mock_shop_app').trim();
       const runLiveDast = Boolean(document.getElementById('checkLiveDast')?.checked);
+      const derivedAppName = (sourceDir.includes('unseen_app_sim') || targetUrl.includes(':5001'))
+        ? 'unseen-billing-portal'
+        : ((sourceDir.includes('mock_shop_app') || targetUrl.includes(':5000')) ? 'mock-web-shop' : 'target-web-shop');
 
       btn.disabled = true;
       btn.textContent = 'Scanning...';
@@ -2517,6 +2763,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            app_name: derivedAppName,
             target_url: targetUrl,
             source_dir: sourceDir,
             run_live_dast: runLiveDast

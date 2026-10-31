@@ -18,7 +18,7 @@ import yaml
 import requests
 from flask import Flask, request, redirect, render_template, render_template_string, send_file
 from werkzeug.utils import secure_filename
-from routes.orders import orders_bp
+import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from routes.orders import orders_bp
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 app = Flask(__name__, template_folder=TEMPLATE_DIR)

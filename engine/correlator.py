@@ -565,6 +565,35 @@ class Correlator:
                     dast_finding_ids=[f.id for f in dast_ev],
                 )
                 correlated_issues.append(issue)
+            else:
+                # Multi-method / multi-probe route handler merge:
+                # If a route exposes multiple HTTP methods (e.g. GET and POST on /api/v1/billing/diagnostics)
+                # and an earlier method already confirmed the exact same SAST sink on this route and parameter,
+                # attach this DAST proof to that Confirmed issue instead of emitting a duplicate Runtime-only row.
+                for existing_issue in correlated_issues:
+                    if existing_issue.status != IssueStatus.CONFIRMED or existing_issue.cwe != d.cwe:
+                        continue
+                    s_existing = existing_issue.sast_finding
+                    if not s_existing or not s_existing.file_path or not s_existing.line:
+                        continue
+                    if self.route_mapper.is_line_in_route(s_existing.file_path, s_existing.line, dast_route):
+                        if self._has_parameter_conflict(
+                            s_existing.code_snippet or "",
+                            d.param,
+                            dast_route.parameters,
+                            sast_param=s_existing.param,
+                        ):
+                            continue
+                        matched_dast_ids.add(d.id)
+                        dast_merged_ids = d.raw_details.get("merged_finding_ids", [d.id])
+                        dast_ev_extra = [raw_dast_by_id[fid] for fid in dast_merged_ids if fid in raw_dast_by_id] or [d]
+                        existing_dast_ids = {f.id for f in existing_issue.dast_evidence}
+                        for extra_f in dast_ev_extra:
+                            if extra_f.id not in existing_dast_ids:
+                                existing_issue.dast_evidence.append(extra_f)
+                                existing_dast_ids.add(extra_f.id)
+                        existing_issue.finding_count = len(existing_issue.sast_evidence) + len(existing_issue.dast_evidence)
+                        break
 
         # Step 3: Remaining SAST findings become 'Code only' (FR-7)
         for s in active_sast:
