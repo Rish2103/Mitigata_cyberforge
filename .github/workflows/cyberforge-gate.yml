@@ -1,0 +1,53 @@
+name: CyberForge Correlate AppSec Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  correlate-and-verify-gate:
+    name: SAST + 2-Phase DAST + SCA Correlation & CI Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run full verification and torture test suite
+        run: |
+          pytest -v
+
+      - name: Export OASIS SARIF v2.1.0 & evaluate CI Gate
+        run: |
+          python -c "
+          import json
+          from fastapi.testclient import TestClient
+          from api.main import app
+
+          with TestClient(app) as client:
+              scan = client.post('/scans', json={
+                  'app_name': 'ci-mock-shop',
+                  'target_url': 'http://127.0.0.1:5000',
+                  'source_dir': './tests/mock_shop_app',
+                  'run_live_dast': True,
+              }).json()
+              scan_id = scan['scan_id']
+              sarif = client.get(f'/scans/{scan_id}/sarif').json()
+              with open('cyberforge-results.sarif.json', 'w', encoding='utf-8') as f:
+                  json.dump(sarif, f, indent=2)
+              gate = client.get(f'/scans/{scan_id}/ci-gate').json()
+              print('CI Gate Result:', json.dumps(gate, indent=2))
+              assert sarif['version'] == '2.1.0'
+              assert gate['status'] in ('PASS', 'FAIL')
+          "

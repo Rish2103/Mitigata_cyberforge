@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  web-shop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cyberforge-vulnerable-shop
+    working_dir: /app/tests/mock_shop_app
+    command: ["python", "app.py"]
+    ports:
+      - "5000:5000"
+    networks:
+      cyberforge-net:
+        aliases:
+          - web-shop
+          - test-app
+          - mock-shop
+
+  cyberforge-correlate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cyberforge-correlate-api
+    working_dir: /app
+    command: ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      - CYBERFORGE_DB_PATH=/app/cyberforge_correlate.db
+      - CYBERFORGE_ALLOWED_HOSTS=localhost,127.0.0.1,::1,web-shop,test-app,mock-shop
+    ports:
+      - "8000:8000"
+    depends_on:
+      - web-shop
+    networks:
+      - cyberforge-net
+
+networks:
+  cyberforge-net:
+    driver: bridge

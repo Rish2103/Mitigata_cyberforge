@@ -1021,6 +1021,11 @@
         <div id="credentialIsolationBadge" class="security-badge neutral" title="Zero API keys or secrets are embedded in client-side code">
           <span>API Keys: Server-Isolated</span>
         </div>
+        <div id="ciGateBadge" class="security-badge neutral" title="Deterministic CI/CD Gate status (/scans/{id}/ci-gate)">
+          <span id="ciGateBadgeText">CI Gate: Evaluating</span>
+        </div>
+        <a class="btn" id="btnOpenLiveShop" href="http://localhost:5000" target="_blank" rel="noopener noreferrer" title="Open Live Vulnerable Storefront on port 5000">Live Storefront (:5000)</a>
+        <button type="button" class="btn" id="btnExportSarif" onclick="downloadSarifReport()" title="Download OASIS SARIF v2.1.0 report">Download SARIF v2.1.0</button>
         <button type="button" class="btn" id="btnOpenGuide" onclick="openOnboardingModal()">System Guide</button>
         <button type="button" class="btn" id="btnIdempotency" onclick="runIdempotencyCheck()">Verify Idempotency (2x)</button>
         <button type="button" class="btn btn-primary" id="btnRunScan" onclick="triggerScan(false)">Run Correlation Scan</button>
@@ -1081,6 +1086,31 @@
           <span>2-Phase DAST</span>
         </label>
         <button type="button" class="btn" onclick="refreshAllData()">Refresh Telemetry</button>
+      </div>
+    </section>
+
+    <!-- Judge Complexity & Scope Reduction Banner (Task B3.2) -->
+    <section id="judgeComplexityBanner" class="config-panel" aria-label="Judge Complexity and Adaptive Scope Reduction Telemetry" style="grid-template-columns: repeat(4, minmax(180px, 1fr));">
+      <div class="field-group">
+        <span class="field-label">Static Analysis Complexity</span>
+        <div id="complexityFormulaText" class="code-tag" style="padding:7px 10px; font-weight:600;">Single-Pass AST O(N_ast + K_tainted_sinks)</div>
+      </div>
+      <div class="field-group">
+        <span class="field-label">Naive Probes vs Reduced Probes</span>
+        <div id="probeReductionStats" class="code-tag" style="padding:7px 10px; font-weight:600;">Naive: 0 -&gt; Reduced: 0 (0 Saved)</div>
+      </div>
+      <div class="field-group">
+        <span class="field-label">% Active HTTP Traffic Saved</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span id="scopeReductionPctBadge" class="status-chip SafeDecoy">0.0% Active HTTP Traffic Saved</span>
+        </div>
+      </div>
+      <div class="field-group">
+        <span class="field-label">Runtime Route Parity Verification</span>
+        <div id="runtimeParityStats" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <span class="status-chip SafeDecoy">EXACT_REPLICA: 0</span>
+          <span class="status-chip NeedsVerification">RUNTIME_DRIFT_EXTRA: 0</span>
+        </div>
       </div>
     </section>
 
@@ -1718,13 +1748,14 @@
       renderTableSkeleton('scaTableBody', 6, 3);
 
       try {
-        const [health, issuesRes, routesRes, decoysRes, scaRes, scansRes] = await Promise.all([
+        const [health, issuesRes, routesRes, decoysRes, scaRes, scansRes, ciGateRes] = await Promise.all([
           apiFetchJson('/health').catch(() => null),
           apiFetchJson('/issues'),
           apiFetchJson('/routes'),
           apiFetchJson('/decoys'),
           apiFetchJson('/sca'),
-          apiFetchJson('/scans').catch(() => [])
+          apiFetchJson('/scans').catch(() => []),
+          apiFetchJson('/ci-gate').catch(() => null)
         ]);
 
         if (health && health.credential_isolation) {
@@ -1741,6 +1772,7 @@
         appState.scans = Array.isArray(scansRes) ? scansRes : (Array.isArray(scansRes?.scans) ? scansRes.scans : []);
 
         updateKpiMetrics(issuesRes?.counts || {}, scaRes);
+        updateScopeReductionAndCiGate(ciGateRes);
         populateScanHistoryDropdown();
         renderIssuesTable();
         renderRoutesTable();
@@ -1789,6 +1821,66 @@
       document.getElementById('tabCountRoutes').textContent = String(appState.routes.length);
       document.getElementById('tabCountDecoys').textContent = String(decoysCount);
       document.getElementById('tabCountSca').textContent = String(appState.scaFindings.length);
+    }
+
+    function updateScopeReductionAndCiGate(ciGateRes) {
+      const latestScan = appState.scans && appState.scans.length > 0 ? appState.scans[0] : null;
+      const sr = latestScan && latestScan.scope_reduction ? latestScan.scope_reduction : null;
+
+      const compEl = document.getElementById('complexityFormulaText');
+      const probeEl = document.getElementById('probeReductionStats');
+      const pctEl = document.getElementById('scopeReductionPctBadge');
+      const parityEl = document.getElementById('runtimeParityStats');
+
+      if (sr) {
+        const compText = escapeHtml(sr.time_complexity_summary || sr.time_complexity || 'Single-Pass AST O(N_ast + K_tainted_sinks)');
+        if (compEl) compEl.textContent = compText;
+        const naive = Number(sr.naive_probe_count || 0);
+        const reduced = Number(sr.reduced_probe_count || 0);
+        const saved = Number(sr.probes_saved_count !== undefined ? sr.probes_saved_count : Math.max(0, naive - reduced));
+        const pct = Number(sr.scope_reduction_pct !== undefined ? sr.scope_reduction_pct : (sr.probes_saved_pct || 0)).toFixed(1);
+        const exactCount = Number(sr.exact_replica_routes || 0);
+        const driftCount = Number(sr.drifted_routes !== undefined ? sr.drifted_routes : (sr.runtime_drift_routes || 0));
+
+        if (probeEl) probeEl.textContent = `Naive: ${naive} -> Reduced: ${reduced} (${saved} Saved)`;
+        if (pctEl) pctEl.textContent = `${pct}% Active HTTP Traffic Saved`;
+        if (parityEl) {
+          parityEl.innerHTML = `
+            <span class="status-chip SafeDecoy">EXACT_REPLICA: ${exactCount}</span>
+            <span class="status-chip NeedsVerification">RUNTIME_DRIFT_EXTRA: ${driftCount}</span>`;
+        }
+      }
+
+      const gateBadge = document.getElementById('ciGateBadge');
+      const gateText = document.getElementById('ciGateBadgeText');
+      if (gateBadge && gateText && ciGateRes) {
+        const isFail = ciGateRes.status === 'FAIL' || ciGateRes.exit_code === 1;
+        gateText.textContent = isFail
+          ? `CI Gate: FAIL (Exit 1 : ${ciGateRes.blocking_confirmed_count || 0} Confirmed)`
+          : 'CI Gate: PASS (Exit 0)';
+        gateBadge.title = escapeHtml(ciGateRes.reason || 'Deterministic CI/CD Gate');
+      }
+    }
+
+    async function downloadSarifReport() {
+      const selScanId = document.getElementById('selectScanHistory')?.value;
+      const latestScanId = appState.scans && appState.scans.length > 0 ? appState.scans[0].scan_id : null;
+      const targetScanId = selScanId || latestScanId;
+      const endpoint = targetScanId ? `/scans/${encodeURIComponent(targetScanId)}/sarif` : '/export/sarif';
+      try {
+        const sarifData = await apiFetchJson(endpoint);
+        const blob = new Blob([JSON.stringify(sarifData, null, 2)], { type: 'application/sarif+json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cyberforge-scan-${targetScanId || 'latest'}.sarif.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showErrorBanner('SARIF v2.1.0 Export Failed', err.message);
+      }
     }
 
     function populateScanHistoryDropdown() {
@@ -1935,6 +2027,16 @@
         tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">No AST Routes Indexed Yet</div><p>Run a correlation scan to extract Flask/FastAPI/Express route signatures.</p></div></td></tr>`;
         return;
       }
+      const latestScan = appState.scans && appState.scans.length > 0 ? appState.scans[0] : null;
+      const srEntries = latestScan && latestScan.scope_reduction && Array.isArray(latestScan.scope_reduction.route_entries)
+        ? latestScan.scope_reduction.route_entries
+        : [];
+      const parityByRoute = {};
+      srEntries.forEach((re) => {
+        const key = `${String(re.method || 'GET').toUpperCase()} ${re.canonical_path || re.path_pattern || ''}`;
+        parityByRoute[key] = re;
+      });
+
       tbody.innerHTML = appState.routes.map((r) => {
         const methods = (Array.isArray(r.http_methods) ? r.http_methods : (Array.isArray(r.methods) && r.methods.length ? r.methods : [r.method || 'GET'])).join(', ');
         const params = (Array.isArray(r.params) && r.params.length) ? r.params.join(', ') : 'None';
@@ -1942,9 +2044,21 @@
         const fPath = r.file || r.file_path || '';
         const lStart = r.start_line || r.line_start || 1;
         const lEnd = r.end_line || r.line_end || lStart;
+        const canonPath = r.canonical_path || r.path_pattern || '/';
+        const primaryMethod = String(r.method || 'GET').toUpperCase();
+        const srMatch = parityByRoute[`${primaryMethod} ${canonPath}`] || null;
+        const parityStatus = srMatch ? (srMatch.parity_status || 'EXACT_REPLICA') : 'EXACT_REPLICA';
+        const scopeStrategy = srMatch ? (srMatch.scope_strategy || 'TARGETED_REDUCTION') : 'EXACT_REPLICA';
+        const parityChipClass = parityStatus === 'RUNTIME_DRIFT_EXTRA' ? 'NeedsVerification' : 'SafeDecoy';
         return `
           <tr>
-            <td><span class="code-tag">${escapeHtml(r.canonical_path || r.path_pattern)}</span></td>
+            <td>
+              <div><span class="code-tag">${escapeHtml(canonPath)}</span></div>
+              <div style="margin-top:4px; display:flex; gap:4px; flex-wrap:wrap;">
+                <span class="status-chip ${parityChipClass}" style="font-size:10px; padding:1px 6px;">${escapeHtml(parityStatus)}</span>
+                <span class="code-tag" style="font-size:10px; padding:1px 6px;">${escapeHtml(scopeStrategy)}</span>
+              </div>
+            </td>
             <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(methods)}</td>
             <td style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(fPath)}:${escapeHtml(lStart)}-${escapeHtml(lEnd)}</td>
             <td><span class="code-tag">${escapeHtml(r.func_name)}()</span></td>
@@ -2165,6 +2279,39 @@
       }
     }
 
+    function buildBeforeAfterRemediationDiff(issue) {
+      const cwe = String(issue.cwe || '').toUpperCase();
+      const param = issue.param || issue.parameter || 'user_input';
+      const beforeLine = (issue.snippet || issue.code_snippet || '').trim();
+      let beforeCode = beforeLine;
+      let afterCode = '';
+
+      if (cwe.includes('89')) {
+        beforeCode = beforeCode || `cursor.execute(f"SELECT * FROM records WHERE ${param} = '{${param}}'")`;
+        afterCode = `cursor.execute("SELECT * FROM records WHERE ${param} = ?", (${param},))`;
+      } else if (cwe.includes('79')) {
+        beforeCode = beforeCode || `return f"<div>Results for {${param}}</div>"`;
+        afterCode = `return f"<div>Results for {markupsafe.escape(${param})}</div>"`;
+      } else if (cwe.includes('78')) {
+        beforeCode = beforeCode || `subprocess.check_output(f"ping -c 1 {${param}}", shell=True)`;
+        afterCode = `subprocess.run(["ping", "-c", "1", ${param}], shell=False, check=True)`;
+      } else if (cwe.includes('22')) {
+        beforeCode = beforeCode || `open(os.path.join(BASE_DIR, ${param}), "rb")`;
+        afterCode = `safe_path = os.path.realpath(os.path.join(BASE_DIR, ${param}))\nif not safe_path.startswith(os.path.realpath(BASE_DIR)):\n    raise ValueError("Path traversal blocked")`;
+      } else if (cwe.includes('601')) {
+        beforeCode = beforeCode || `return redirect(${param}, code=302)`;
+        afterCode = `parsed = urlparse(${param})\nif parsed.scheme or parsed.netloc:\n    ${param} = "/"\nreturn redirect(${param}, code=302)`;
+      } else if (cwe.includes('798')) {
+        beforeCode = beforeCode || `API_SECRET_KEY = "sk_live_hardcoded_secret"`;
+        afterCode = `API_SECRET_KEY = os.environ["API_SECRET_KEY"]`;
+      } else {
+        beforeCode = beforeCode || `# Missing runtime security control on ${issue.canonical_path || '/'}`;
+        afterCode = `response.headers["Content-Security-Policy"] = "default-src 'self'"\nresponse.headers["X-Frame-Options"] = "DENY"\nresponse.headers["X-Content-Type-Options"] = "nosniff"`;
+      }
+
+      return `- BEFORE (Vulnerable Sink):\n- ${beforeCode}\n\n+ AFTER (Hardened Fix):\n+ ${afterCode.split('\n').join('\n+ ')}`;
+    }
+
     function renderInspectorContent(issue) {
       const chip = document.getElementById('sheetStatusChip');
       const chipClass = normalizeStatusClass(issue.status);
@@ -2199,12 +2346,17 @@
       const linkReasonText = issue.link_reason || issue.link_explanation || issue.reasoning || 'Correlated via AST route handler and parameter binding.';
       const fairLakhs = issue.fair_exposure_inr_lakhs !== undefined ? `INR ${Number(issue.fair_exposure_inr_lakhs).toFixed(1)}L FAIR` : '';
       const sebiSla = issue.sebi_cscrf_sla_days !== undefined ? `SEBI SLA: ${issue.sebi_cscrf_sla_days}d` : '';
+      const autoVerifiedBadge = issue.auto_verified
+        ? '<span class="status-chip Confirmed">B-1 Auto-Verified</span>'
+        : '';
+      const remediationDiffText = buildBeforeAfterRemediationDiff(issue);
 
       document.getElementById('sheetBody').innerHTML = `
         <div class="evidence-card">
-          <div class="evidence-card-title">Correlation Verdict &amp; Route Binding</div>
+          <div class="evidence-card-title">Correlation Verdict &amp; Route Binding (B-3)</div>
           <p style="font-size:13px; color:var(--text-primary); margin-bottom:8px;">${escapeHtml(linkReasonText)}</p>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            ${autoVerifiedBadge}
             <span class="code-tag">Route: ${escapeHtml(issue.canonical_path || issue.matched_route || 'N/A')}</span>
             <span class="code-tag">${escapeHtml(cweLabel)}</span>
             <span class="code-tag">Param: ${escapeHtml(issue.param || issue.parameter || 'N/A')}</span>
@@ -2213,17 +2365,20 @@
             ${sebiSla ? `<span class="code-tag">${escapeHtml(sebiSla)}</span>` : ''}
           </div>
         </div>
-        <div class="evidence-card">
-          <div class="evidence-card-title">Static AST &amp; SAST Sink Evidence</div>
-          ${sastHtml}
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+          <div class="evidence-card">
+            <div class="evidence-card-title">Static AST &amp; SAST Sink Proof</div>
+            ${sastHtml}
+          </div>
+          <div class="evidence-card">
+            <div class="evidence-card-title">Live Runtime DAST HTTP Proof</div>
+            ${dastHtml}
+          </div>
         </div>
         <div class="evidence-card">
-          <div class="evidence-card-title">2-Phase DAST Differential Evidence</div>
-          ${dastHtml}
-        </div>
-        <div class="evidence-card">
-          <div class="evidence-card-title">Remediation Guidance</div>
-          <p style="font-size:13px; color:var(--text-secondary);">${escapeHtml(issue.fix_suggestion || issue.remediation || 'Apply parameterized queries, strict context-aware output encoding, or host allowlists.')}</p>
+          <div class="evidence-card-title">Before / After Code Remediation Diff (B-4)</div>
+          <p style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">${escapeHtml(issue.fix_suggestion || issue.remediation || 'Apply parameterized queries, strict context-aware output encoding, or host allowlists.')}</p>
+          <pre class="pre-block">${escapeHtml(remediationDiffText)}</pre>
         </div>`;
     }
 

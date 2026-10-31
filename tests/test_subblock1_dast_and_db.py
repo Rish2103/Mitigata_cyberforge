@@ -1376,3 +1376,158 @@ def test_phase2_b23_api_scope_reduction_telemetry_and_get_scan_by_id() -> None:
         finally:
             os.environ.pop("CYBERFORGE_DB_PATH", None)
 
+
+# ===========================================================================
+# Phase 3 Person B Tests: Task B3.1, Task B3.2, and Task B3.3
+# ===========================================================================
+
+
+def test_phase3_b31_sarif_v210_exporter_and_ci_gate_endpoints() -> None:
+    """
+    Task B3.1: Verify OASIS SARIF v2.1.0 Exporter (`api/sarif_exporter.py`),
+    `GET /scans/{scan_id}/sarif`, `GET /export/sarif`, `GET /scans/{scan_id}/ci-gate`,
+    and `GET /ci-gate`.
+    """
+    from api.sarif_exporter import evaluate_ci_gate
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "phase3_sarif.db")
+        os.environ["CYBERFORGE_DB_PATH"] = db_path
+        try:
+            with TestClient(gordon_api_app) as client:
+                # 1. Trigger a scan with Confirmed Critical/High issues
+                scan_res = client.post(
+                    "/scans",
+                    json={
+                        "app_name": "sarif-demo-shop",
+                        "run_live_dast": False,
+                        "seed_checkpoint_slice_if_empty": True,
+                    },
+                )
+                assert scan_res.status_code == 200
+                scan_id = scan_res.json()["scan_id"]
+
+                # 2. Verify GET /scans/{scan_id}/sarif and GET /export/sarif return valid SARIF v2.1.0
+                for sarif_url in (f"/scans/{scan_id}/sarif", "/export/sarif"):
+                    sarif_res = client.get(sarif_url)
+                    assert sarif_res.status_code == 200
+                    sarif_doc = sarif_res.json()
+                    assert sarif_doc["$schema"] == "https://json.schemastore.org/sarif-2.1.0.json"
+                    assert sarif_doc["version"] == "2.1.0"
+                    assert len(sarif_doc["runs"]) == 1
+                    run0 = sarif_doc["runs"][0]
+                    assert run0["tool"]["driver"]["name"] == "CyberForge Correlate"
+                    assert len(run0["results"]) >= 5
+                    first_res = run0["results"][0]
+                    assert "physicalLocation" in first_res["locations"][0]
+                    props = first_res["properties"]
+                    for required_prop in (
+                        "status",
+                        "url",
+                        "param",
+                        "payload",
+                        "evidence",
+                        "risk_score",
+                        "fair_exposure_inr_lakhs",
+                    ):
+                        assert required_prop in props
+
+                # 3. Verify GET /scans/{scan_id}/ci-gate and GET /ci-gate return FAIL (exit_code: 1)
+                for gate_url in (f"/scans/{scan_id}/ci-gate", "/ci-gate"):
+                    gate_res = client.get(gate_url)
+                    assert gate_res.status_code == 200
+                    gate_data = gate_res.json()
+                    assert gate_data["status"] == "FAIL"
+                    assert gate_data["exit_code"] == 1
+                    assert gate_data["passed"] is False
+                    assert gate_data["blocking_confirmed_count"] >= 2
+
+                # 4. Verify evaluate_ci_gate returns PASS (exit_code: 0) when no Confirmed Critical/High or Reachable KEV SCA exist
+                code_only_issue = CorrelatedIssue(
+                    status="Code only",
+                    cwe="CWE-798",
+                    severity="High",
+                    file="config.py",
+                    line=10,
+                )
+                non_kev_sca = SCAFinding(
+                    package_name="urllib3",
+                    installed_version="1.26.0",
+                    advisory_id="GHSA-test-0001",
+                    cve_id="CVE-2023-0001",
+                    reachability_status="Present-only",
+                    in_cisa_kev=True,
+                )
+                pass_gate = evaluate_ci_gate(issues=[code_only_issue], sca_findings=[non_kev_sca])
+                assert pass_gate["status"] == "PASS"
+                assert pass_gate["exit_code"] == 0
+                assert pass_gate["passed"] is True
+
+                # 5. Verify Reachable CISA KEV SCA finding triggers FAIL (exit_code: 1)
+                reachable_kev_sca = SCAFinding(
+                    package_name="pyyaml",
+                    installed_version="5.3.1",
+                    advisory_id="GHSA-kev-9999",
+                    cve_id="CVE-2020-14343",
+                    reachability_status="Reachable",
+                    in_cisa_kev=True,
+                    call_chain=["POST /import -> load_yaml() -> yaml.load()"],
+                )
+                kev_fail_gate = evaluate_ci_gate(issues=[code_only_issue], sca_findings=[reachable_kev_sca])
+                assert kev_fail_gate["status"] == "FAIL"
+                assert kev_fail_gate["exit_code"] == 1
+                assert kev_fail_gate["blocking_reachable_kev_sca_count"] == 1
+        finally:
+            os.environ.pop("CYBERFORGE_DB_PATH", None)
+
+
+def test_phase3_b32_and_b33_ui_banner_remediation_diff_and_packaging() -> None:
+    """
+    Task B3.2 & B3.3: Verify `ui/index.html` contains the Judge Complexity & Scope Reduction
+    Banner, Before/After Code Remediation Diff, 1-click SARIF v2.1.0 download, CI Gate badge,
+    Live Storefront (:5000) link, and verify `Dockerfile`, `docker-compose.yml`,
+    `.github/workflows/cyberforge-gate.yml`, and `README.md` exist and are valid.
+    """
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parent.parent
+    ui_html = (project_root / "ui/index.html").read_text(encoding="utf-8")
+
+    # Task B3.2 UI verification
+    for expected_token in (
+        "judgeComplexityBanner",
+        "Single-Pass AST O(N_ast + K_tainted_sinks)",
+        "Naive Probes vs Reduced Probes",
+        "% Active HTTP Traffic Saved",
+        "EXACT_REPLICA",
+        "RUNTIME_DRIFT_EXTRA",
+        "buildBeforeAfterRemediationDiff",
+        "Before / After Code Remediation Diff (B-4)",
+        "B-1 Auto-Verified",
+        "downloadSarifReport",
+        "Download SARIF v2.1.0",
+        "ciGateBadge",
+        "http://localhost:5000",
+    ):
+        assert expected_token in ui_html, f"Missing expected UI token: {expected_token}"
+
+    # Task B3.3 Docker & CI/CD packaging verification
+    dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
+    assert "uvicorn" in dockerfile
+    assert "8000" in dockerfile
+
+    compose_yml = (project_root / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "8000:8000" in compose_yml
+    assert "5000:5000" in compose_yml
+    assert "tests/mock_shop_app" in compose_yml
+
+    workflow_yml = (project_root / ".github/workflows/cyberforge-gate.yml").read_text(encoding="utf-8")
+    assert "pytest" in workflow_yml
+    assert "/sarif" in workflow_yml
+    assert "/ci-gate" in workflow_yml
+
+    readme_md = (project_root / "README.md").read_text(encoding="utf-8")
+    assert "docker compose up" in readme_md
+    assert "SARIF v2.1.0" in readme_md
+
+

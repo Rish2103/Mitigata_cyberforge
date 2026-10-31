@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from api.db import DatabaseStore
+from api.sarif_exporter import build_sarif_report, evaluate_ci_gate
 from core.config import TargetScopeViolationError, get_allowed_hosts, validate_target_url
 from core.schemas import (
     CanonicalFinding,
@@ -871,6 +872,109 @@ async def compare_two_scans(
         target = target or scans[0].scan_id
         base = base or scans[1].scan_id
     return store.compare_scans(base_scan_id=base, target_scan_id=target)
+
+
+@app.get("/scans/{scan_id}/sarif")
+async def export_scan_sarif(
+    scan_id: int,
+    store: DatabaseStore = Depends(get_store),
+) -> JSONResponse:
+    """Task B3.1 (B-6): Export a specific scan's correlated issues and SCA findings as OASIS SARIF v2.1.0."""
+    scan = store.get_scan_by_id(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail=f"Scan #{scan_id} not found.")
+    issues = store.get_issues(scan_id=scan_id, only_open=False)
+    sca_findings = store.get_sca_findings(app_name=scan.app_name)
+    sarif_doc = build_sarif_report(issues=issues, sca_findings=sca_findings, scan_summary=scan)
+    return JSONResponse(
+        content=sarif_doc,
+        headers={
+            "Content-Disposition": f'attachment; filename="cyberforge-scan-{scan_id}.sarif.json"'
+        },
+    )
+
+
+@app.get("/export/sarif")
+async def export_latest_sarif(
+    scan_id: Optional[int] = Query(default=None, description="Optional scan_id (defaults to latest scan)"),
+    app_name: Optional[str] = Query(default=None, description="Optional app_name filter"),
+    store: DatabaseStore = Depends(get_store),
+) -> JSONResponse:
+    """Task B3.1 (B-6): Export the latest scan (or specified scan_id) in OASIS SARIF v2.1.0 format."""
+    scan: Optional[ScanSummary] = None
+    if scan_id is not None:
+        scan = store.get_scan_by_id(scan_id)
+        if scan is None:
+            raise HTTPException(status_code=404, detail=f"Scan #{scan_id} not found.")
+    else:
+        scans = store.get_scans()
+        if app_name:
+            scans = [s for s in scans if s.app_name == app_name]
+        if scans:
+            scan = scans[0]
+
+    effective_scan_id = scan.scan_id if scan is not None else None
+    effective_app = app_name or (scan.app_name if scan is not None else None)
+    issues = store.get_issues(
+        app_name=effective_app,
+        scan_id=effective_scan_id,
+        only_open=(effective_scan_id is None),
+    )
+    sca_findings = store.get_sca_findings(app_name=effective_app)
+    sarif_doc = build_sarif_report(issues=issues, sca_findings=sca_findings, scan_summary=scan)
+    fname = f"cyberforge-scan-{effective_scan_id or 'latest'}.sarif.json"
+    return JSONResponse(
+        content=sarif_doc,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/scans/{scan_id}/ci-gate")
+async def get_scan_ci_gate(
+    scan_id: int,
+    store: DatabaseStore = Depends(get_store),
+) -> Dict[str, Any]:
+    """
+    Task B3.1: Evaluate CI/CD security gate for `scan_id`.
+    Returns `status: "FAIL"`, `exit_code: 1` if any `Confirmed` Critical/High issue
+    or `Reachable` CISA KEV SCA CVE exists, else `status: "PASS"`, `exit_code: 0`.
+    """
+    scan = store.get_scan_by_id(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail=f"Scan #{scan_id} not found.")
+    issues = store.get_issues(scan_id=scan_id, only_open=False)
+    sca_findings = store.get_sca_findings(app_name=scan.app_name)
+    return evaluate_ci_gate(issues=issues, sca_findings=sca_findings, scan_summary=scan)
+
+
+@app.get("/ci-gate")
+async def get_latest_ci_gate(
+    scan_id: Optional[int] = Query(default=None, description="Optional scan_id (defaults to latest scan)"),
+    app_name: Optional[str] = Query(default=None, description="Optional app_name filter"),
+    store: DatabaseStore = Depends(get_store),
+) -> Dict[str, Any]:
+    """Task B3.1: Evaluate CI/CD security gate for the latest scan (or specified `scan_id`)."""
+    scan: Optional[ScanSummary] = None
+    if scan_id is not None:
+        scan = store.get_scan_by_id(scan_id)
+        if scan is None:
+            raise HTTPException(status_code=404, detail=f"Scan #{scan_id} not found.")
+    else:
+        scans = store.get_scans()
+        if app_name:
+            scans = [s for s in scans if s.app_name == app_name]
+        if scans:
+            scan = scans[0]
+
+    effective_scan_id = scan.scan_id if scan is not None else None
+    effective_app = app_name or (scan.app_name if scan is not None else None)
+    issues = store.get_issues(
+        app_name=effective_app,
+        scan_id=effective_scan_id,
+        only_open=(effective_scan_id is None),
+    )
+    sca_findings = store.get_sca_findings(app_name=effective_app)
+    return evaluate_ci_gate(issues=issues, sca_findings=sca_findings, scan_summary=scan)
 
 
 @app.get("/scans/{scan_id}", response_model=ScanSummary)
