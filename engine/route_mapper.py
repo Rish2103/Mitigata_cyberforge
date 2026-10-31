@@ -16,7 +16,7 @@ Extracts:
 import ast
 import os
 import re
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Pattern, Set, Tuple
 from core.schemas import CalledFunction, RouteEntry
 
 
@@ -531,20 +531,42 @@ class RouteMapper:
         js_files: List[Tuple[str, str]] = []
         java_files: List[Tuple[str, str]] = []
 
-        for dirpath, _, filenames in os.walk(self.root_dir):
-            parts = os.path.normpath(dirpath).split(os.sep)
-            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build", "target") for p in parts):
-                continue
+        skip_dirs = {
+            "venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build",
+            "target", "out", "bin", "gradle", ".gradle", ".mvn", ".git", ".idea",
+            ".vscode", "vendor", "coverage", "logs", ".tox", ".mypy_cache", ".pytest_cache",
+        }
 
-            for fname in sorted(filenames):
-                full_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
-                if fname.endswith(".py"):
-                    py_files.append((full_path, rel_path))
-                elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
-                    js_files.append((full_path, rel_path))
-                elif fname.endswith(".java"):
-                    java_files.append((full_path, rel_path))
+        if os.path.isfile(self.root_dir):
+            fname = os.path.basename(self.root_dir)
+            if fname.endswith(".py"):
+                py_files.append((self.root_dir, fname))
+            elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
+                js_files.append((self.root_dir, fname))
+            elif fname.endswith(".java"):
+                java_files.append((self.root_dir, fname))
+        else:
+            for dirpath, dirnames, filenames in os.walk(self.root_dir):
+                # Prune build/artifact/vendor directories in-place so os.walk never descends into them
+                dirnames[:] = [
+                    d for d in sorted(dirnames)
+                    if not d.startswith(".") and d.lower() not in skip_dirs
+                ]
+                rel_dir = os.path.relpath(dirpath, self.root_dir)
+                if rel_dir != ".":
+                    rel_parts = rel_dir.split(os.sep)
+                    if any(p.startswith(".") or p.lower() in skip_dirs for p in rel_parts):
+                        continue
+
+                for fname in sorted(filenames):
+                    full_path = os.path.join(dirpath, fname)
+                    rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
+                    if fname.endswith(".py"):
+                        py_files.append((full_path, rel_path))
+                    elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
+                        js_files.append((full_path, rel_path))
+                    elif fname.endswith(".java"):
+                        java_files.append((full_path, rel_path))
 
         # Pass 1 on Python files: collect cross-file Blueprint / APIRouter prefixes & Pydantic models
         for full_path, rel_path in py_files:
@@ -1187,10 +1209,19 @@ class RouteMapper:
         method_sig_re = re.compile(
             r"^\s*(?:public|protected|private)\s+(?:static\s+)?(?:final\s+)?[\w<>\[\],\s\?]+\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)"
         )
+        max_in_memory_bytes = 2 * 1024 * 1024  # 2 MB threshold; stream larger files in constant RAM
+
         for full_path, rel_path in java_files:
             try:
+                file_size = os.path.getsize(full_path)
+                if file_size > max_in_memory_bytes:
+                    self._scan_large_java_file_stream(full_path, rel_path, spring_verb_map, method_sig_re)
+                    continue
+
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
+                if "(" not in content:
+                    continue
                 lines = content.splitlines()
 
                 # Detect class-level @RequestMapping or @WebServlet prefix
@@ -1237,8 +1268,17 @@ class RouteMapper:
                     idx += 1
 
                 # Pass 2: Scan for Spring Boot route annotations and Servlet handlers
+                has_route_markers = any(
+                    k in content
+                    for k in ("Mapping", "@WebServlet", "doGet", "doPost", "doPut", "doDelete")
+                )
+                if not has_route_markers:
+                    continue
+
                 for idx, raw_line in enumerate(lines):
                     s_line = raw_line.strip()
+                    if "@" not in s_line and "void do" not in s_line:
+                        continue
                     route_methods: List[str] = []
                     sub_path = ""
                     matched_annotation = False
@@ -1334,6 +1374,137 @@ class RouteMapper:
                         )
             except Exception:
                 pass
+
+    def _scan_large_java_file_stream(
+        self,
+        full_path: str,
+        rel_path: str,
+        spring_verb_map: Dict[str, str],
+        method_sig_re: Pattern[str],
+    ) -> None:
+        """
+        Streaming O(1)-RAM Java route & method scanner for huge monolithic files (> 2 MB up to 13+ GB).
+        Never loads the full file into memory; inspects lines via an 8 MB buffered stream.
+        """
+        class_prefix = ""
+        web_servlet_path = ""
+        seen_class_decl = False
+        pending_route: Optional[Tuple[int, List[str], str, Optional[str]]] = None
+
+        with open(full_path, "r", encoding="utf-8", errors="ignore", buffering=8 * 1024 * 1024) as f:
+            lineno = 0
+            while True:
+                raw_line = f.readline()
+                if not raw_line:
+                    break
+                lineno += 1
+                s_line = raw_line.strip()
+                if not s_line or s_line.startswith(("//", "/*", "*")):
+                    continue
+
+                if not seen_class_decl:
+                    if "class " in s_line and re.search(r"\bclass\s+[A-Z]\w*", s_line):
+                        seen_class_decl = True
+                    else:
+                        if "@RequestMapping" in s_line:
+                            m_cls_req = re.search(
+                                r"""@RequestMapping\s*\(\s*(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""",
+                                s_line,
+                            )
+                            if m_cls_req:
+                                class_prefix = m_cls_req.group(1).strip()
+                        if "@WebServlet" in s_line:
+                            m_servlet = re.search(
+                                r"""@WebServlet\s*\(\s*(?:(?:value|urlPatterns)\s*=\s*)?["']([^"']+)["']""",
+                                s_line,
+                            )
+                            if m_servlet:
+                                web_servlet_path = m_servlet.group(1).strip()
+                        continue
+
+                # Check route annotations inside class body
+                if s_line.startswith("@"):
+                    for ann_name, http_verb in spring_verb_map.items():
+                        m_ann = re.search(rf"@{ann_name}\b(?:\s*\((.*)\))?", s_line)
+                        if m_ann:
+                            ann_args = m_ann.group(1) or ""
+                            m_p = re.search(r"""(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""", ann_args)
+                            sub_p = m_p.group(1).strip() if m_p else ""
+                            pending_route = (lineno, [http_verb], sub_p, None)
+                            break
+                    else:
+                        if s_line.startswith("@RequestMapping"):
+                            m_p = re.search(r"""(?:(?:value|path)\s*=\s*)?["']([^"']+)["']""", s_line)
+                            sub_p = m_p.group(1).strip() if m_p else ""
+                            m_verb = re.findall(r"RequestMethod\.(GET|POST|PUT|DELETE|PATCH)", s_line)
+                            pending_route = (lineno, m_verb if m_verb else ["GET"], sub_p, None)
+                    continue
+
+                # Check Servlet doGet / doPost
+                if web_servlet_path and "void do" in s_line:
+                    m_do = re.search(r"\bprotected\s+void\s+do(Get|Post|Put|Delete)\s*\(", s_line)
+                    if m_do:
+                        s_verb = m_do.group(1).upper()
+                        pending_route = (lineno, [s_verb], web_servlet_path, s_verb)
+
+                # Check method signature line
+                if "(" in s_line and any(mod in s_line for mod in ("public ", "protected ", "private ")):
+                    m_sig = method_sig_re.match(s_line)
+                    if m_sig:
+                        func_name = m_sig.group(1)
+                        raw_args = m_sig.group(2)
+                        start_line = pending_route[0] if pending_route else lineno
+                        block_lines = [raw_line]
+                        brace_depth = raw_line.count("{") - raw_line.count("}")
+                        opened = "{" in raw_line
+                        for _ in range(60):
+                            if opened and brace_depth <= 0:
+                                break
+                            nxt = f.readline()
+                            if not nxt:
+                                break
+                            lineno += 1
+                            block_lines.append(nxt)
+                            if "{" in nxt:
+                                opened = True
+                            brace_depth += nxt.count("{") - nxt.count("}")
+                        end_line = lineno
+                        block_text = "".join(block_lines)
+                        full_route_path = ""
+                        if pending_route:
+                            _, r_methods, sub_p, servlet_v = pending_route
+                            full_route_path = web_servlet_path if servlet_v else (self._join_prefixes(class_prefix, sub_p) or "/")
+                        params = self._extract_java_params(block_text, raw_args, full_route_path)
+                        called = self._extract_js_calls(block_text, exclude_name=func_name)
+                        self.func_to_file_lines[func_name] = (rel_path, start_line, end_line)
+                        self.call_graph.setdefault(func_name, set()).update(called)
+                        self.func_defs.setdefault(func_name, []).append(
+                            (rel_path, start_line, end_line, called, params)
+                        )
+                        if pending_route:
+                            _, r_methods, _, _ = pending_route
+                            auth_ctx = "none"
+                            if re.search(r"@(?:PreAuthorize|Secured|RolesAllowed)\b", block_text) or (
+                                'getHeader("Authorization")' in block_text or "SecurityContextHolder" in block_text
+                            ):
+                                auth_ctx = "spring_security"
+                            for m_verb in r_methods:
+                                self.routes.append(
+                                    RouteEntry(
+                                        method=m_verb,
+                                        path_pattern=full_route_path,
+                                        regex_pattern=_normalize_route_pattern_to_regex(full_route_path),
+                                        file_path=rel_path,
+                                        func_name=func_name,
+                                        start_line=start_line,
+                                        end_line=end_line,
+                                        parameters=sorted(list(params)),
+                                        called_funcs=sorted(list(called)),
+                                        auth_context=auth_ctx,
+                                        framework="spring",
+                                    )
+                                )
+                            pending_route = None
 
     @staticmethod
     def _extract_java_params(block_text: str, raw_args: str, route_path: str) -> Set[str]:

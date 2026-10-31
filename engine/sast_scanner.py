@@ -15,11 +15,12 @@ so that safe parameterised queries, sanitized inputs, and unreachable dead code 
 """
 
 import ast
+from collections import deque
 import hashlib
 import json
 import os
 import re
-from typing import List, Optional, Set, Dict, Any, Tuple, Union
+from typing import Callable, List, Optional, Set, Dict, Any, Tuple, Union
 from core.schemas import CanonicalFinding, FindingSource, Severity
 from core.config import CWE_NAMES
 from engine.decoy_filter import DecoyFilter
@@ -489,23 +490,45 @@ class SASTScanner:
         self._func_call_edges: Dict[str, List[Tuple[str, List[str]]]] = {}
         self._func_local_aliases: Dict[str, List[Tuple[str, str]]] = {}
 
-        for dirpath, _, filenames in os.walk(self.root_dir):
-            parts = os.path.normpath(dirpath).split(os.sep)
-            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build") for p in parts):
-                continue
+        skip_dirs = {
+            "venv", ".venv", "__pycache__", "env", "node_modules", "dist", "build",
+            "target", "out", "bin", "gradle", ".gradle", ".mvn", ".git", ".idea",
+            ".vscode", "vendor", "coverage", "logs", ".tox", ".mypy_cache", ".pytest_cache",
+        }
 
-            for fname in sorted(filenames):
-                full_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
-                if fname.endswith(".py"):
-                    file_findings = self._scan_python_file(full_path, rel_path, reachable_files, active_mapper)
-                    all_findings.extend(file_findings)
-                elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
-                    js_findings = self._scan_js_file(full_path, rel_path, reachable_files, active_mapper)
-                    all_findings.extend(js_findings)
-                elif fname.endswith(".java"):
-                    java_findings = self._scan_java_file(full_path, rel_path, reachable_files, active_mapper)
-                    all_findings.extend(java_findings)
+        if os.path.isfile(self.root_dir):
+            fname = os.path.basename(self.root_dir)
+            if fname.endswith(".py"):
+                all_findings.extend(self._scan_python_file(self.root_dir, fname, reachable_files, active_mapper))
+            elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
+                all_findings.extend(self._scan_js_file(self.root_dir, fname, reachable_files, active_mapper))
+            elif fname.endswith(".java"):
+                all_findings.extend(self._scan_java_file(self.root_dir, fname, reachable_files, active_mapper))
+        else:
+            for dirpath, dirnames, filenames in os.walk(self.root_dir):
+                # Prune build/artifact/vendor directories in-place so os.walk never descends into them
+                dirnames[:] = [
+                    d for d in sorted(dirnames)
+                    if not d.startswith(".") and d.lower() not in skip_dirs
+                ]
+                rel_dir = os.path.relpath(dirpath, self.root_dir)
+                if rel_dir != ".":
+                    rel_parts = rel_dir.split(os.sep)
+                    if any(p.startswith(".") or p.lower() in skip_dirs for p in rel_parts):
+                        continue
+
+                for fname in sorted(filenames):
+                    full_path = os.path.join(dirpath, fname)
+                    rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
+                    if fname.endswith(".py"):
+                        file_findings = self._scan_python_file(full_path, rel_path, reachable_files, active_mapper)
+                        all_findings.extend(file_findings)
+                    elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
+                        js_findings = self._scan_js_file(full_path, rel_path, reachable_files, active_mapper)
+                        all_findings.extend(js_findings)
+                    elif fname.endswith(".java"):
+                        java_findings = self._scan_java_file(full_path, rel_path, reachable_files, active_mapper)
+                        all_findings.extend(java_findings)
 
         # Propagate HTTP parameter names across 3-hop helper call chains & intra-function aliases
         for _ in range(5):
@@ -916,6 +939,210 @@ class SASTScanner:
             return next(iter(var_to_param.values()))
         return None
 
+    _JAVA_ACTIVE_SINK_KEYWORDS = (
+        "execute",
+        "query",
+        "update",
+        "createNativeQuery",
+        "prepareStatement",
+        "Runtime",
+        ".exec",
+        "ProcessBuilder",
+        "getWriter",
+        "ResponseEntity",
+        "FileInputStream",
+        "Files.",
+        "Paths.get",
+        "sendRedirect",
+        "redirect:",
+    )
+    _JAVA_SECRET_KEYWORDS = ("key", "secret", "password", "passwd", "token")
+
+    def _evaluate_java_sink_line(
+        self,
+        line_s: str,
+        lineno: int,
+        rel_path: str,
+        get_context_window: Callable[[], str],
+        route_mapper: Optional[Any],
+        findings: List[CanonicalFinding],
+    ) -> None:
+        has_active_sink = any(k in line_s for k in self._JAVA_ACTIVE_SINK_KEYWORDS)
+        has_secret_cand = (
+            "=" in line_s
+            and ('"' in line_s or "'" in line_s)
+            and any(sk in line_s.lower() for sk in self._JAVA_SECRET_KEYWORDS)
+        )
+        if not has_active_sink and not has_secret_cand:
+            return
+
+        fn_name: Optional[str] = None
+        if route_mapper is not None:
+            matched_routes = route_mapper.find_routes_for_finding(rel_path, lineno)
+            if matched_routes:
+                fn_name = matched_routes[0].func_name
+
+        if has_active_sink:
+            context_window = get_context_window()
+            java_param = self._infer_java_param(line_s, context_window)
+
+            # 1. CWE-89: Java SQL Injection & Safe PreparedStatement Decoy
+            is_sql_exec = bool(
+                re.search(
+                    r"\b(?:stmt|statement|conn|connection|jdbcTemplate|entityManager)\s*\.\s*(?:executeQuery|executeUpdate|execute|query|queryForObject| queryForList|update|createNativeQuery)\s*\(",
+                    line_s,
+                )
+            )
+            is_prep_stmt = bool(re.search(r"\bprepareStatement\s*\(", line_s))
+            if is_sql_exec or is_prep_stmt:
+                has_concat = "+" in line_s or "String.format(" in line_s or (
+                    "+" in context_window and bool(re.search(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b", context_window, re.IGNORECASE))
+                )
+                is_safe_prep = is_prep_stmt and "?" in line_s and "+" not in line_s and "String.format(" not in line_s
+                if has_concat or is_safe_prep:
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-89", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-89",
+                            cwe_name=CWE_NAMES.get("CWE-89"),
+                            severity=Severity.CRITICAL,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            param=java_param,
+                            code_snippet=line_s,
+                            is_protected_decoy=is_safe_prep,
+                            decoy_reason=(
+                                "Safe parameterized SQL query: Java PreparedStatement with '?' bound placeholders"
+                                if is_safe_prep
+                                else None
+                            ),
+                        )
+                    )
+
+            # 2. CWE-78: Java OS Command Injection & Safe ProcessBuilder Decoy
+            is_runtime_exec = bool(re.search(r"Runtime\.getRuntime\(\)\.exec\s*\(", line_s))
+            is_proc_builder = bool(re.search(r"new\s+ProcessBuilder\s*\(", line_s))
+            if is_runtime_exec or is_proc_builder:
+                invokes_shell = bool(re.search(r"""["'](?:sh|bash|/bin/sh|cmd|cmd\.exe)["']\s*,\s*["'](?:-c|/c)["']""", line_s))
+                has_concat = "+" in line_s or "String.format(" in line_s
+                is_safe_pb = is_proc_builder and not invokes_shell and not has_concat
+                if is_runtime_exec or invokes_shell or has_concat or is_safe_pb:
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-78", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-78",
+                            cwe_name=CWE_NAMES.get("CWE-78"),
+                            severity=Severity.CRITICAL,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            param=java_param,
+                            code_snippet=line_s,
+                            is_protected_decoy=is_safe_pb,
+                            decoy_reason=(
+                                "Safe command execution: Java ProcessBuilder argument list without shell interpretation"
+                                if is_safe_pb
+                                else None
+                            ),
+                        )
+                    )
+
+            # 3. CWE-79: Java Reflected XSS & Safe HtmlUtils.htmlEscape Decoy
+            if (
+                re.search(r"\bgetWriter\(\)\s*\.\s*(?:write|print|println)\s*\(", line_s)
+                or re.search(r"\bResponseEntity\s*\.\s*ok\s*\(", line_s)
+            ) and _HTML_TAG_RE.search(line_s):
+                if "+" in line_s or "String.format(" in line_s:
+                    is_safe_xss, xss_reason = DecoyFilter.is_safe_xss(None, context_window)
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-79", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-79",
+                            cwe_name=CWE_NAMES.get("CWE-79"),
+                            severity=Severity.HIGH,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            param=java_param,
+                            code_snippet=line_s,
+                            is_protected_decoy=is_safe_xss,
+                            decoy_reason=xss_reason if is_safe_xss else None,
+                        )
+                    )
+
+            # 4. CWE-22: Java Path Traversal & Safe .normalize().startsWith() Decoy
+            if re.search(r"\b(?:new\s+FileInputStream|Files\.readString|Files\.readAllBytes|Paths\.get)\s*\(", line_s):
+                if "+" in line_s or (java_param and java_param in line_s):
+                    is_safe_path, path_reason = DecoyFilter.is_safe_path_traversal(None, context_window)
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-22", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-22",
+                            cwe_name=CWE_NAMES.get("CWE-22"),
+                            severity=Severity.HIGH,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            param=java_param,
+                            code_snippet=line_s,
+                            is_protected_decoy=is_safe_path,
+                            decoy_reason=path_reason if is_safe_path else None,
+                        )
+                    )
+
+            # 5. CWE-601: Java Open Redirect
+            if re.search(r"\bsendRedirect\s*\(", line_s) or (
+                '"redirect:"' in line_s and "+" in line_s
+            ):
+                if not re.search(r"""\bsendRedirect\s*\(\s*["'][^"']+["']\s*\)""", line_s):
+                    is_safe_red, red_reason = DecoyFilter.is_safe_redirect(None, context_window)
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-601", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-601",
+                            cwe_name=CWE_NAMES.get("CWE-601"),
+                            severity=Severity.MEDIUM,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            param=java_param,
+                            code_snippet=line_s,
+                            is_protected_decoy=is_safe_red,
+                            decoy_reason=red_reason if is_safe_red else None,
+                        )
+                    )
+
+        if has_secret_cand:
+            # 6. CWE-798: Java Hard-coded Secrets
+            sec_match = re.search(
+                r"""(?:private|public|protected|static|final|\bString\b)\s+[\w\s]*\b([a-zA-Z0-9_]*(?:api[_-]?key|secret|password|passwd|jwt[_-]?secret|private[_-]?key|auth[_-]?token)[a-zA-Z0-9_]*)\s*=\s*["']([^"']{6,})["']""",
+                line_s,
+                re.IGNORECASE,
+            )
+            if sec_match and "System.getenv" not in line_s and "getProperty" not in line_s:
+                val = sec_match.group(2).strip()
+                if val.lower() not in ("changeme", "placeholder", "none", "null"):
+                    findings.append(
+                        CanonicalFinding(
+                            id=_fingerprint_sast("CWE-798", rel_path, lineno),
+                            source=FindingSource.SAST,
+                            cwe="CWE-798",
+                            cwe_name=CWE_NAMES.get("CWE-798"),
+                            severity=Severity.HIGH,
+                            file_path=rel_path,
+                            line=lineno,
+                            func_name=fn_name,
+                            code_snippet=line_s,
+                            is_protected_decoy=False,
+                        )
+                    )
+
     def _scan_java_file(
         self,
         full_path: str,
@@ -924,184 +1151,62 @@ class SASTScanner:
         route_mapper: Optional[Any] = None,
     ) -> List[CanonicalFinding]:
         findings: List[CanonicalFinding] = []
+        max_in_memory_bytes = 2 * 1024 * 1024  # 2 MB threshold; stream larger files in O(1) RAM
         try:
-            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-            lines = content.splitlines()
+            file_size = os.path.getsize(full_path)
+            if file_size > max_in_memory_bytes:
+                # Streaming 14-line sliding-window mode (8 preceding + current + 5 lookahead)
+                window: deque[Tuple[int, str]] = deque(maxlen=14)
+                pending_eval: deque[Tuple[int, str]] = deque()
+                with open(full_path, "r", encoding="utf-8", errors="ignore", buffering=8 * 1024 * 1024) as f:
+                    for idx, raw_line in enumerate(f):
+                        lineno = idx + 1
+                        clean_line = raw_line.rstrip("\r\n")
+                        window.append((lineno, clean_line))
+                        pending_eval.append((lineno, clean_line))
+                        if len(pending_eval) > 5:
+                            target_lineno, target_raw = pending_eval.popleft()
+                            line_s = target_raw.strip()
+                            if line_s and not line_s.startswith(("//", "/*", "*")):
+                                self._evaluate_java_sink_line(
+                                    line_s=line_s,
+                                    lineno=target_lineno,
+                                    rel_path=rel_path,
+                                    get_context_window=lambda: "\n".join(ln for _, ln in window),
+                                    route_mapper=route_mapper,
+                                    findings=findings,
+                                )
+                    while pending_eval:
+                        target_lineno, target_raw = pending_eval.popleft()
+                        line_s = target_raw.strip()
+                        if line_s and not line_s.startswith(("//", "/*", "*")):
+                            self._evaluate_java_sink_line(
+                                line_s=line_s,
+                                lineno=target_lineno,
+                                rel_path=rel_path,
+                                get_context_window=lambda: "\n".join(ln for _, ln in window),
+                                route_mapper=route_mapper,
+                                findings=findings,
+                            )
+            else:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                lines = content.splitlines()
 
-            for idx, raw_line in enumerate(lines):
-                lineno = idx + 1
-                line_s = raw_line.strip()
-                if not line_s or line_s.startswith(("//", "/*", "*")):
-                    continue
+                for idx, raw_line in enumerate(lines):
+                    lineno = idx + 1
+                    line_s = raw_line.strip()
+                    if not line_s or line_s.startswith(("//", "/*", "*")):
+                        continue
 
-                window_start = max(0, idx - 8)
-                window_end = min(len(lines), idx + 5)
-                context_window = "\n".join(lines[window_start:window_end])
-                java_param = self._infer_java_param(line_s, context_window)
-
-                # Resolve enclosing Java method name from RouteMapper if available
-                fn_name: Optional[str] = None
-                if route_mapper is not None:
-                    matched_routes = route_mapper.find_routes_for_finding(rel_path, lineno)
-                    if matched_routes:
-                        fn_name = matched_routes[0].func_name
-
-                # 1. CWE-89: Java SQL Injection & Safe PreparedStatement Decoy
-                is_sql_exec = bool(
-                    re.search(
-                        r"\b(?:stmt|statement|conn|connection|jdbcTemplate|entityManager)\s*\.\s*(?:executeQuery|executeUpdate|execute|query|queryForObject| queryForList|update|createNativeQuery)\s*\(",
-                        line_s,
+                    self._evaluate_java_sink_line(
+                        line_s=line_s,
+                        lineno=lineno,
+                        rel_path=rel_path,
+                        get_context_window=lambda i=idx: "\n".join(lines[max(0, i - 8) : min(len(lines), i + 5)]),
+                        route_mapper=route_mapper,
+                        findings=findings,
                     )
-                )
-                is_prep_stmt = bool(re.search(r"\bprepareStatement\s*\(", line_s))
-                if is_sql_exec or is_prep_stmt:
-                    has_concat = "+" in line_s or "String.format(" in line_s or (
-                        "+" in context_window and bool(re.search(r"\b(?:SELECT|INSERT|UPDATE|DELETE)\b", context_window, re.IGNORECASE))
-                    )
-                    is_safe_prep = is_prep_stmt and "?" in line_s and "+" not in line_s and "String.format(" not in line_s
-                    if has_concat or is_safe_prep:
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-89", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-89",
-                                cwe_name=CWE_NAMES.get("CWE-89"),
-                                severity=Severity.CRITICAL,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                param=java_param,
-                                code_snippet=line_s,
-                                is_protected_decoy=is_safe_prep,
-                                decoy_reason=(
-                                    "Safe parameterized SQL query: Java PreparedStatement with '?' bound placeholders"
-                                    if is_safe_prep
-                                    else None
-                                ),
-                            )
-                        )
-
-                # 2. CWE-78: Java OS Command Injection & Safe ProcessBuilder Decoy
-                is_runtime_exec = bool(re.search(r"Runtime\.getRuntime\(\)\.exec\s*\(", line_s))
-                is_proc_builder = bool(re.search(r"new\s+ProcessBuilder\s*\(", line_s))
-                if is_runtime_exec or is_proc_builder:
-                    invokes_shell = bool(re.search(r"""["'](?:sh|bash|/bin/sh|cmd|cmd\.exe)["']\s*,\s*["'](?:-c|/c)["']""", line_s))
-                    has_concat = "+" in line_s or "String.format(" in line_s
-                    is_safe_pb = is_proc_builder and not invokes_shell and not has_concat
-                    if is_runtime_exec or invokes_shell or has_concat or is_safe_pb:
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-78", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-78",
-                                cwe_name=CWE_NAMES.get("CWE-78"),
-                                severity=Severity.CRITICAL,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                param=java_param,
-                                code_snippet=line_s,
-                                is_protected_decoy=is_safe_pb,
-                                decoy_reason=(
-                                    "Safe command execution: Java ProcessBuilder argument list without shell interpretation"
-                                    if is_safe_pb
-                                    else None
-                                ),
-                            )
-                        )
-
-                # 3. CWE-79: Java Reflected XSS & Safe HtmlUtils.htmlEscape Decoy
-                if (
-                    re.search(r"\bgetWriter\(\)\s*\.\s*(?:write|print|println)\s*\(", line_s)
-                    or re.search(r"\bResponseEntity\s*\.\s*ok\s*\(", line_s)
-                ) and _HTML_TAG_RE.search(line_s):
-                    if "+" in line_s or "String.format(" in line_s:
-                        is_safe_xss, xss_reason = DecoyFilter.is_safe_xss(None, context_window)
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-79", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-79",
-                                cwe_name=CWE_NAMES.get("CWE-79"),
-                                severity=Severity.HIGH,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                param=java_param,
-                                code_snippet=line_s,
-                                is_protected_decoy=is_safe_xss,
-                                decoy_reason=xss_reason if is_safe_xss else None,
-                            )
-                        )
-
-                # 4. CWE-22: Java Path Traversal & Safe .normalize().startsWith() Decoy
-                if re.search(r"\b(?:new\s+FileInputStream|Files\.readString|Files\.readAllBytes|Paths\.get)\s*\(", line_s):
-                    if "+" in line_s or (java_param and java_param in line_s):
-                        is_safe_path, path_reason = DecoyFilter.is_safe_path_traversal(None, context_window)
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-22", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-22",
-                                cwe_name=CWE_NAMES.get("CWE-22"),
-                                severity=Severity.HIGH,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                param=java_param,
-                                code_snippet=line_s,
-                                is_protected_decoy=is_safe_path,
-                                decoy_reason=path_reason if is_safe_path else None,
-                            )
-                        )
-
-                # 5. CWE-601: Java Open Redirect
-                if re.search(r"\bsendRedirect\s*\(", line_s) or (
-                    '"redirect:"' in line_s and "+" in line_s
-                ):
-                    if not re.search(r"""\bsendRedirect\s*\(\s*["'][^"']+["']\s*\)""", line_s):
-                        is_safe_red, red_reason = DecoyFilter.is_safe_redirect(None, context_window)
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-601", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-601",
-                                cwe_name=CWE_NAMES.get("CWE-601"),
-                                severity=Severity.MEDIUM,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                param=java_param,
-                                code_snippet=line_s,
-                                is_protected_decoy=is_safe_red,
-                                decoy_reason=red_reason if is_safe_red else None,
-                            )
-                        )
-
-                # 6. CWE-798: Java Hard-coded Secrets
-                sec_match = re.search(
-                    r"""(?:private|public|protected|static|final|\bString\b)\s+[\w\s]*\b([a-zA-Z0-9_]*(?:api[_-]?key|secret|password|passwd|jwt[_-]?secret|private[_-]?key|auth[_-]?token)[a-zA-Z0-9_]*)\s*=\s*["']([^"']{6,})["']""",
-                    line_s,
-                    re.IGNORECASE,
-                )
-                if sec_match and "System.getenv" not in line_s and "getProperty" not in line_s:
-                    val = sec_match.group(2).strip()
-                    if val.lower() not in ("changeme", "placeholder", "none", "null"):
-                        findings.append(
-                            CanonicalFinding(
-                                id=_fingerprint_sast("CWE-798", rel_path, lineno),
-                                source=FindingSource.SAST,
-                                cwe="CWE-798",
-                                cwe_name=CWE_NAMES.get("CWE-798"),
-                                severity=Severity.HIGH,
-                                file_path=rel_path,
-                                line=lineno,
-                                func_name=fn_name,
-                                code_snippet=line_s,
-                                is_protected_decoy=False,
-                            )
-                        )
 
             filtered: List[CanonicalFinding] = []
             for f in findings:

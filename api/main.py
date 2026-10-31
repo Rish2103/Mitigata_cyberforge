@@ -109,7 +109,8 @@ def _resolve_reachable_target_url(url: str) -> str:
     """
     If `url` points to `127.0.0.1:5000` or `127.0.0.1:5001` from the browser UI while
     running inside Docker Compose, transparently route to the sibling container hostname
-    (`http://web-shop:5000` or `http://unseen-app:5001`) when reachable on `cyberforge-net`.
+    (`http://web-shop:5000` or `http://unseen-app:5001`) or `host.docker.internal:<port>`
+    when reachable.
     """
     if _is_tcp_port_reachable(url):
         return url
@@ -125,9 +126,42 @@ def _resolve_reachable_target_url(url: str) -> str:
             candidate = docker_Fallbacks.get(port)
             if candidate and _is_tcp_port_reachable(candidate):
                 return candidate
+            if port:
+                host_internal = f"{parsed.scheme or 'http'}://host.docker.internal:{port}{parsed.path or ''}"
+                if _is_tcp_port_reachable(host_internal):
+                    return host_internal
     except Exception:
         pass
     return url
+
+
+def _resolve_source_dir(raw_source_dir: Optional[str]) -> Optional[str]:
+    """
+    Resolve `source_dir` across host paths, relative workspace paths, and Docker `/app` mounts.
+    Allows Windows paths (e.g. `s:\\Mitigata_cyberforge\\examples\\java_spring_demo`) pasted into
+    the UI to resolve transparently inside the Linux `/app` container volume mount.
+    """
+    if not raw_source_dir:
+        return None
+    cleaned = raw_source_dir.strip()
+    if os.path.exists(cleaned):
+        return cleaned
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    norm_slashes = cleaned.replace("\\", "/")
+    candidates = [
+        norm_slashes,
+        os.path.join(repo_root, norm_slashes.lstrip("/")),
+    ]
+    for marker in ("Mitigata_cyberforge/", "app/"):
+        if marker.lower() in norm_slashes.lower():
+            idx = norm_slashes.lower().rfind(marker.lower()) + len(marker)
+            rel_suffix = norm_slashes[idx:].lstrip("/")
+            if rel_suffix:
+                candidates.append(os.path.join(repo_root, rel_suffix))
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            return cand
+    return cleaned
 
 
 def _load_local_wsgi_transport(source_dir: Optional[str]) -> Optional[_AsyncWSGITransport]:
@@ -661,9 +695,11 @@ async def create_and_run_scan(
         except TargetScopeViolationError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    effective_source_dir = _resolve_source_dir(request.source_dir)
+
     scan_id = store.create_scan(
         app_name=request.app_name,
-        source_dir=request.source_dir,
+        source_dir=effective_source_dir or request.source_dir,
         target_url=validated_url,
     )
 
@@ -674,17 +710,17 @@ async def create_and_run_scan(
     mapper_instance: Optional[Any] = None
 
     # 1. Person A Route Mapper, SAST Scanner & Reachability SCA (graceful dynamic import)
-    if request.source_dir and os.path.exists(request.source_dir):
+    if effective_source_dir and os.path.exists(effective_source_dir):
         try:
             from engine import route_mapper  # type: ignore
 
             if hasattr(route_mapper, "RouteMapper"):
-                mapper_instance = route_mapper.RouteMapper(request.source_dir)
+                mapper_instance = route_mapper.RouteMapper(effective_source_dir)
                 routes.extend(mapper_instance.scan())
             elif hasattr(route_mapper, "build_route_map"):
-                routes.extend(route_mapper.build_route_map(request.source_dir))
+                routes.extend(route_mapper.build_route_map(effective_source_dir))
             elif hasattr(route_mapper, "map_routes"):
-                routes.extend(route_mapper.map_routes(request.source_dir))
+                routes.extend(route_mapper.map_routes(effective_source_dir))
         except ImportError:
             pass
 
@@ -694,16 +730,16 @@ async def create_and_run_scan(
             if hasattr(sast_scanner, "run_sast_scan"):
                 sast_findings.extend(
                     sast_scanner.run_sast_scan(
-                        request.source_dir,
+                        effective_source_dir,
                         routes=routes,
                         route_mapper=mapper_instance,
                     )
                 )
             elif hasattr(sast_scanner, "scan_source"):
-                sast_findings.extend(sast_scanner.scan_source(request.source_dir))
+                sast_findings.extend(sast_scanner.scan_source(effective_source_dir))
             elif hasattr(sast_scanner, "SASTScanner"):
                 scanner_instance = sast_scanner.SASTScanner(
-                    request.source_dir, route_mapper=mapper_instance
+                    effective_source_dir, route_mapper=mapper_instance
                 )
                 reachable_files = (
                     mapper_instance.get_reachable_files() if mapper_instance is not None else None
@@ -736,14 +772,14 @@ async def create_and_run_scan(
                 if hasattr(sca_reachability, "run_sca_reachability"):
                     sca_findings.extend(
                         sca_reachability.run_sca_reachability(
-                            request.source_dir,
+                            effective_source_dir,
                             routes=routes,
                             route_mapper=mapper_instance,
                         )
                     )
                 elif hasattr(sca_reachability, "SCAReachabilityEngine"):
                     sca_engine = sca_reachability.SCAReachabilityEngine(
-                        request.source_dir, route_mapper=mapper_instance
+                        effective_source_dir, route_mapper=mapper_instance
                     )
                     sca_report = sca_engine.analyze_reachability()
                     alert_flags_by_pkg: Dict[str, List[str]] = {}
@@ -781,7 +817,7 @@ async def create_and_run_scan(
     effective_target_url = _resolve_reachable_target_url(validated_url) if validated_url else None
     if effective_target_url and request.run_live_dast:
         if not _is_tcp_port_reachable(effective_target_url):
-            wsgi_transport = _load_local_wsgi_transport(request.source_dir)
+            wsgi_transport = _load_local_wsgi_transport(effective_source_dir)
         dast_scanner_instance = DASTScanner(
             base_url=effective_target_url,
             auth_headers=request.auth_headers,

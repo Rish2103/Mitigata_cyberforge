@@ -38,9 +38,13 @@ services:
     container_name: cyberforge-correlate-api
     working_dir: /app
     command: ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - CYBERFORGE_DB_PATH=/app/cyberforge_correlate.db
-      - CYBERFORGE_ALLOWED_HOSTS=localhost,127.0.0.1,::1,web-shop,test-app,mock-shop,unseen-app,unseen_app,second-app
+      - CYBERFORGE_ALLOWED_HOSTS=localhost,127.0.0.1,::1,host.docker.internal,web-shop,test-app,mock-shop,unseen-app,unseen_app,second-app
     ports:
       - "8000:8000"
     depends_on:

@@ -1285,6 +1285,158 @@ def apply_coupon_and_referral_sql(coupon_code, referral_code):
         self.assertTrue(os.path.isfile(res["exported_json"]))
         self.assertTrue(os.path.isfile(res["exported_sarif"]))
 
+    def test_large_java_streaming_target_pruning_single_file_and_maven_sca(self):
+        """
+        Verifies the 4 Large-Java & Polyglot Upgrades:
+          1. In-place os.walk pruning of `target/` and `build/` directories so build artifacts are never entered.
+          2. Direct single `.java` file scanning (`RouteMapper(file.java)` + `SASTScanner(file.java)`).
+          3. Streaming O(1)-RAM mode for `.java` files > 2 MB (`_scan_large_java_file_stream` + sliding deque SAST).
+          4. Maven `pom.xml` + `.java` 5-Step Reachability-Aware SCA (`Reachable`, `Imported-only`, `Present-only`, `Unknown`).
+        """
+        # 1. Create a `target/` directory with a poisoned `.java` file that MUST be pruned and ignored
+        target_dir = os.path.join(self.test_dir, "target", "generated-sources")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(target_dir, "GeneratedTrap.java"), "w", encoding="utf-8") as f:
+            f.write('''
+package com.example.trap;
+import org.springframework.web.bind.annotation.*;
+@RestController
+@RequestMapping("/api/trap")
+public class GeneratedTrap {
+    @GetMapping("/should_be_ignored")
+    public String trap(@RequestParam("x") String x) throws Exception {
+        Runtime.getRuntime().exec("sh -c " + x);
+        return x;
+    }
+}
+''')
+
+        # 2. Create a Maven `pom.xml` with 4 vulnerable Java dependencies
+        pom_xml = '''<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.mitigata</groupId>
+    <artifactId>monolith-app</artifactId>
+    <version>1.0.0</version>
+    <properties>
+        <log4j.version>2.14.1</log4j.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>1.30</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-text</artifactId>
+            <version>1.9</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <version>5.3.15</version>
+        </dependency>
+    </dependencies>
+</project>'''
+        with open(os.path.join(self.test_dir, "pom.xml"), "w", encoding="utf-8") as f:
+            f.write(pom_xml)
+
+        # 3. Create a > 2.2 MB `.java` controller file to trigger streaming O(1)-RAM mode (> 2 MB threshold)
+        src_dir = os.path.join(self.test_dir, "src", "main", "java")
+        os.makedirs(src_dir, exist_ok=True)
+        huge_java_path = os.path.join(src_dir, "HugeEnterpriseController.java")
+
+        header_code = '''package com.mitigata.enterprise;
+import org.springframework.web.bind.annotation.*;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.yaml.snakeyaml.Yaml;
+import java.sql.*;
+
+@RestController
+@RequestMapping("/api/v2/enterprise")
+public class HugeEnterpriseController {
+    private static final Logger logger = LogManager.getLogger(HugeEnterpriseController.class);
+    private static final String AWS_SECRET = "AKIAIOSFODNN7EXAMPLE";
+'''
+        # ~2.2 MB of filler methods/comments before the real routes at the bottom of the file
+        filler_line = "    // Enterprise audit padding line for multi-megabyte streaming verification 0123456789ABCDEF\n"
+        filler_count = 25000  # ~2.35 MB
+
+        footer_code = '''
+    @GetMapping("/SafeOrders")
+    public String safeOrders(@RequestParam("orderId") String orderId, Connection conn) throws Exception {
+        PreparedStatement ps = conn.prepareStatement("SELECT * FROM orders WHERE id = ?");
+        ps.setString(1, orderId);
+        ps.executeQuery();
+        return "ok";
+    }
+
+    @PostMapping("/auditLog")
+    public String auditLog(@RequestParam("entry") String entry, Statement stmt) throws Exception {
+        logger.info(entry);
+        stmt.executeQuery("SELECT * FROM audit_logs WHERE msg = '" + entry + "'");
+        return "logged";
+    }
+}
+'''
+        with open(huge_java_path, "w", encoding="utf-8") as f:
+            f.write(header_code)
+            for _ in range(filler_count):
+                f.write(filler_line)
+            f.write(footer_code)
+
+        self.assertGreater(os.path.getsize(huge_java_path), 2 * 1024 * 1024)
+
+        # Verify directory scan prunes `target/` and streams `HugeEnterpriseController.java`
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        route_paths = {(r.method, r.path_pattern) for r in routes}
+        self.assertIn(("GET", "/api/v2/enterprise/SafeOrders"), route_paths)
+        self.assertIn(("POST", "/api/v2/enterprise/auditLog"), route_paths)
+        self.assertNotIn(("GET", "/api/trap/should_be_ignored"), route_paths)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        active = [f for f in sast_findings if not f.is_protected_decoy]
+        decoys = [f for f in sast_findings if f.is_protected_decoy]
+        self.assertGreaterEqual(len(decoys), 1)
+        active_cwes = {f.cwe for f in active}
+        self.assertIn("CWE-89", active_cwes)
+        self.assertIn("CWE-798", active_cwes)
+
+        # Verify direct single-file scanning (`RouteMapper(huge_java_path)` + `SASTScanner(huge_java_path)`)
+        single_mapper = RouteMapper(huge_java_path)
+        single_routes = single_mapper.scan()
+        self.assertEqual(len(single_routes), 2)
+        single_scanner = SASTScanner(huge_java_path, route_mapper=single_mapper)
+        single_findings = single_scanner.scan(
+            reachable_files=single_mapper.get_reachable_files(),
+            route_mapper=single_mapper,
+        )
+        self.assertGreaterEqual(len([f for f in single_findings if not f.is_protected_decoy]), 2)
+
+        # Verify Maven `pom.xml` + `.java` 5-Step Reachability-Aware SCA
+        from engine.sca_reachability import SCAReachabilityEngine, SCAReachabilityStatus
+
+        sca_engine = SCAReachabilityEngine(self.test_dir, route_mapper=mapper)
+        sca_report = sca_engine.analyze_reachability()
+        by_pkg = {f.package: f for f in sca_report.findings}
+        self.assertIn("log4j-core", by_pkg)
+        self.assertEqual(by_pkg["log4j-core"].status, SCAReachabilityStatus.REACHABLE)
+        self.assertIn("snakeyaml", by_pkg)
+        self.assertEqual(by_pkg["snakeyaml"].status, SCAReachabilityStatus.IMPORTED_ONLY)
+        self.assertIn("commons-text", by_pkg)
+        self.assertEqual(by_pkg["commons-text"].status, SCAReachabilityStatus.PRESENT_ONLY)
+        self.assertIn("spring-webmvc", by_pkg)
+        self.assertEqual(by_pkg["spring-webmvc"].status, SCAReachabilityStatus.UNKNOWN)
+        self.assertEqual(by_pkg["spring-webmvc"].effective_severity, Severity.CRITICAL)
+
 
 if __name__ == "__main__":
     unittest.main()

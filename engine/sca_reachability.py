@@ -217,10 +217,95 @@ BUNDLED_ADVISORIES: List[Dict[str, Any]] = [
         "symbol_source": "osv",
         "summary": "Remote code execution via malicious secretOrPublicKey in jsonwebtoken.verify()",
     },
+    # Java / Maven / Gradle Advisories
+    {
+        "advisory_id": "GHSA-jfh8-c2jp-5v3q",
+        "cve_id": "CVE-2021-44228",
+        "package": "log4j-core",
+        "ecosystem": "maven",
+        "affected_versions": "<2.17.1",
+        "fixed_version": "2.17.1",
+        "severity": Severity.CRITICAL,
+        "cvss_score": 10.0,
+        "epss_score": 0.975,
+        "is_kev": True,
+        "vulnerable_symbols": ["info", "error", "warn", "debug", "fatal", "log", "lookup"],
+        "symbol_source": "osv",
+        "summary": "Apache Log4j2 JNDI RCE (Log4Shell) in log4j-core",
+    },
+    {
+        "advisory_id": "GHSA-mjmj-j48q-9wg2",
+        "cve_id": "CVE-2022-1471",
+        "package": "snakeyaml",
+        "ecosystem": "maven",
+        "affected_versions": "<2.0",
+        "fixed_version": "2.0",
+        "severity": Severity.CRITICAL,
+        "cvss_score": 9.8,
+        "epss_score": 0.89,
+        "is_kev": False,
+        "vulnerable_symbols": ["load", "loadAll", "loadAs"],
+        "symbol_source": "osv",
+        "summary": "Constructor deserialization Remote Code Execution in SnakeYAML Yaml.load()",
+    },
+    {
+        "advisory_id": "GHSA-57j2-w4cx-62h2",
+        "cve_id": "CVE-2020-36518",
+        "package": "jackson-databind",
+        "ecosystem": "maven",
+        "affected_versions": "<2.13.2",
+        "fixed_version": "2.13.2",
+        "severity": Severity.HIGH,
+        "cvss_score": 7.5,
+        "epss_score": 0.65,
+        "is_kev": False,
+        "vulnerable_symbols": ["readValue", "readTree", "enableDefaultTyping"],
+        "symbol_source": "osv",
+        "summary": "Uncontrolled resource consumption / deserialization in jackson-databind ObjectMapper.readValue()",
+    },
+    {
+        "advisory_id": "GHSA-599f-7c49-w659",
+        "cve_id": "CVE-2022-42889",
+        "package": "commons-text",
+        "ecosystem": "maven",
+        "affected_versions": "<1.10.0",
+        "fixed_version": "1.10.0",
+        "severity": Severity.CRITICAL,
+        "cvss_score": 9.8,
+        "epss_score": 0.94,
+        "is_kev": True,
+        "vulnerable_symbols": ["replace", "replaceIn", "createInterpolator"],
+        "symbol_source": "osv",
+        "summary": "Apache Commons Text StringSubstitutor RCE (Text4Shell)",
+    },
+    {
+        "advisory_id": "GHSA-36p3-wjmg-h94x",
+        "cve_id": "CVE-2022-22965",
+        "package": "spring-webmvc",
+        "ecosystem": "maven",
+        "affected_versions": "<5.3.18",
+        "fixed_version": "5.3.18",
+        "severity": Severity.CRITICAL,
+        "cvss_score": 9.8,
+        "epss_score": 0.97,
+        "is_kev": True,
+        "vulnerable_symbols": [],
+        "symbol_source": "unknown",
+        "summary": "Spring4Shell RCE via data binding in Spring MVC / Spring WebFlux",
+    },
 ]
 
+# Maps Java import package prefixes to canonical Maven artifactId
+MAVEN_IMPORT_PREFIX_MAP: Dict[str, str] = {
+    "org.apache.logging.log4j": "log4j-core",
+    "org.yaml.snakeyaml": "snakeyaml",
+    "com.fasterxml.jackson.databind": "jackson-databind",
+    "org.apache.commons.text": "commons-text",
+    "org.springframework.web": "spring-webmvc",
+}
 
-# Top popular PyPI & npm packages for Levenshtein typosquat detection (Step 5)
+
+# Top popular PyPI, npm & Maven packages for Levenshtein typosquat detection (Step 5)
 POPULAR_PACKAGES: Dict[str, Set[str]] = {
     "pypi": {
         "requests",
@@ -265,6 +350,18 @@ POPULAR_PACKAGES: Dict[str, Set[str]] = {
         "next",
         "cors",
         "helmet",
+    },
+    "maven": {
+        "log4j-core",
+        "snakeyaml",
+        "jackson-databind",
+        "commons-text",
+        "spring-webmvc",
+        "spring-boot-starter-web",
+        "guava",
+        "lombok",
+        "slf4j-api",
+        "hibernate-core",
     },
 }
 
@@ -463,20 +560,31 @@ class SCAReachabilityEngine:
     # =========================================================================
     def parse_lockfiles(self) -> Tuple[List[SBOMDependency], bool]:
         """
-        Scans root_dir for requirements.txt, Pipfile.lock, poetry.lock, package-lock.json, and package.json.
+        Scans root_dir for requirements.txt, Pipfile.lock, poetry.lock, package-lock.json,
+        package.json, pom.xml, and build.gradle / build.gradle.kts.
         Returns (sbom_dependencies, has_private_registry_config).
         """
         sbom: List[SBOMDependency] = []
         has_private_registry = False
 
-        for dirpath, _, filenames in os.walk(self.root_dir):
-            parts = os.path.normpath(dirpath).split(os.sep)
-            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules") for p in parts):
-                continue
+        skip_dirs = {
+            "venv", ".venv", "__pycache__", "env", "node_modules",
+            "dist", "build", "target", "out", "bin", "gradle", ".gradle", ".mvn",
+            ".git", ".idea", ".vscode", "vendor", "coverage", "logs",
+            ".tox", ".mypy_cache", ".pytest_cache",
+        }
+        walk_root = os.path.dirname(self.root_dir) if os.path.isfile(self.root_dir) else self.root_dir
+
+        for dirpath, dirnames, filenames in os.walk(walk_root):
+            # Prune build/dependency directories IN-PLACE so os.walk never enters target/ or node_modules/
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".") and d.lower() not in skip_dirs
+            ]
 
             for fname in sorted(filenames):
                 full_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
+                rel_path = os.path.relpath(full_path, walk_root).replace("\\", "/")
 
                 if fname == "requirements.txt" or (fname.startswith("requirements") and fname.endswith(".txt")):
                     deps, priv = self._parse_requirements_txt(full_path, rel_path)
@@ -492,7 +600,11 @@ class SCAReachabilityEngine:
                     # Only add package.json entries if package-lock.json wasn't in the same folder
                     if "package-lock.json" not in filenames:
                         sbom.extend(self._parse_package_json(full_path, rel_path))
-                elif fname in (".npmrc", "pip.conf"):
+                elif fname == "pom.xml":
+                    sbom.extend(self._parse_pom_xml(full_path, rel_path))
+                elif fname in ("build.gradle", "build.gradle.kts"):
+                    sbom.extend(self._parse_build_gradle(full_path, rel_path))
+                elif fname in (".npmrc", "pip.conf", "settings.xml"):
                     has_private_registry = True
 
         # Enrich transitive paths for flat requirements.txt when parent package is also present
@@ -687,6 +799,78 @@ class SCAReachabilityEngine:
             pass
         return deps
 
+    def _parse_pom_xml(self, full_path: str, rel_path: str) -> List[SBOMDependency]:
+        deps: List[SBOMDependency] = []
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            # Parse <properties> for ${...} version resolution
+            props: Dict[str, str] = {}
+            for pm in re.finditer(r"<([a-zA-Z0-9_.-]+)>\s*([^<$\s]+)\s*</\1>", content):
+                props[pm.group(1)] = pm.group(2).strip()
+
+            for dep_m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", content):
+                block = dep_m.group(1)
+                art_m = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", block)
+                if not art_m:
+                    continue
+                artifact_id = art_m.group(1).strip().lower()
+                ver_m = re.search(r"<version>\s*([^<\s]+)\s*</version>", block)
+                raw_ver = ver_m.group(1).strip() if ver_m else "unknown"
+                if raw_ver.startswith("${") and raw_ver.endswith("}"):
+                    prop_key = raw_ver[2:-1]
+                    raw_ver = props.get(prop_key, "unknown")
+                lineno = content[: dep_m.start()].count("\n") + 1
+                is_pinned = bool(re.match(r"^\d+\.\d+", raw_ver)) and not any(c in raw_ver for c in ("[", "(", ",", "*"))
+                deps.append(
+                    SBOMDependency(
+                        name=artifact_id,
+                        version=raw_ver,
+                        ecosystem="maven",
+                        is_direct=True,
+                        is_pinned=is_pinned,
+                        transitive_path=["root", artifact_id],
+                        source_file=rel_path,
+                        line=lineno,
+                    )
+                )
+        except Exception:
+            pass
+        return deps
+
+    def _parse_build_gradle(self, full_path: str, rel_path: str) -> List[SBOMDependency]:
+        deps: List[SBOMDependency] = []
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            for idx, line_s in enumerate(lines):
+                lineno = idx + 1
+                # e.g. implementation 'org.apache.logging.log4j:log4j-core:2.14.1'
+                m = re.search(
+                    r"""(?:implementation|api|compileOnly|runtimeOnly|compile)\s*\(?\s*['"]([^:'"]+):([^:'"]+):([^'"]+)['"]""",
+                    line_s,
+                )
+                if m:
+                    artifact_id = m.group(2).strip().lower()
+                    raw_ver = m.group(3).strip()
+                    is_pinned = bool(re.match(r"^\d+\.\d+", raw_ver)) and "+" not in raw_ver
+                    deps.append(
+                        SBOMDependency(
+                            name=artifact_id,
+                            version=raw_ver,
+                            ecosystem="maven",
+                            is_direct=True,
+                            is_pinned=is_pinned,
+                            transitive_path=["root", artifact_id],
+                            source_file=rel_path,
+                            line=lineno,
+                        )
+                    )
+        except Exception:
+            pass
+        return deps
+
     # =========================================================================
     # STEP 2 & 3: GHSA Match + Function Map (OSV Symbols & Fix-Commit Diffs)
     # =========================================================================
@@ -776,7 +960,7 @@ class SCAReachabilityEngine:
         bool,
     ]:
         """
-        Scans Python and JS/TS source files to collect:
+        Scans Python, JS/TS, and Java source files to collect:
         1. imported_packages: canonical_import_mod -> (rel_path, line)
         2. library_calls: list of (rel_path, enclosing_func, canonical_import_mod, symbol_name, line)
         3. has_dynamic_import: bool
@@ -785,58 +969,98 @@ class SCAReachabilityEngine:
         library_calls: List[Tuple[str, str, str, str, int]] = []
         any_dynamic_import = False
 
-        for dirpath, _, filenames in os.walk(self.root_dir):
-            parts = os.path.normpath(dirpath).split(os.sep)
-            if any(p.startswith(".") or p in ("venv", ".venv", "__pycache__", "env", "node_modules") for p in parts):
-                continue
+        skip_dirs = {
+            "venv", ".venv", "__pycache__", "env", "node_modules",
+            "dist", "build", "target", "out", "bin", "gradle", ".gradle", ".mvn",
+            ".git", ".idea", ".vscode", "vendor", "coverage", "logs",
+            ".tox", ".mypy_cache", ".pytest_cache",
+        }
 
-            for fname in sorted(filenames):
-                full_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
+        if os.path.isfile(self.root_dir):
+            file_entries = [(self.root_dir, os.path.basename(self.root_dir))]
+        else:
+            file_entries = []
+            for dirpath, dirnames, filenames in os.walk(self.root_dir):
+                dirnames[:] = [
+                    d for d in dirnames
+                    if not d.startswith(".") and d.lower() not in skip_dirs
+                ]
+                for fname in sorted(filenames):
+                    full_path = os.path.join(dirpath, fname)
+                    rel_path = os.path.relpath(full_path, self.root_dir).replace("\\", "/")
+                    file_entries.append((full_path, rel_path))
 
-                if fname.endswith(".py"):
-                    try:
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
-                        tree = ast.parse(content, filename=rel_path)
-                        analyzer = _PythonImportAndCallAnalyzer(rel_path)
-                        analyzer.visit(tree)
-                        any_dynamic_import = any_dynamic_import or analyzer.has_dynamic_import
-                        for mod, line in analyzer.imported_modules.items():
-                            imported_packages.setdefault(mod, (rel_path, line))
-                        for enc_func, mod, sym, line in analyzer.lib_calls:
-                            library_calls.append((rel_path, enc_func, mod, sym, line))
-                    except Exception:
-                        pass
+        for full_path, rel_path in file_entries:
+            fname = os.path.basename(full_path)
 
-                elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
-                    try:
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                            lines = f.read().splitlines()
-                        alias_map: Dict[str, str] = {}
-                        for idx, line_s in enumerate(lines):
+            if fname.endswith(".py"):
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    tree = ast.parse(content, filename=rel_path)
+                    analyzer = _PythonImportAndCallAnalyzer(rel_path)
+                    analyzer.visit(tree)
+                    any_dynamic_import = any_dynamic_import or analyzer.has_dynamic_import
+                    for mod, line in analyzer.imported_modules.items():
+                        imported_packages.setdefault(mod, (rel_path, line))
+                    for enc_func, mod, sym, line in analyzer.lib_calls:
+                        library_calls.append((rel_path, enc_func, mod, sym, line))
+                except Exception:
+                    pass
+
+            elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.read().splitlines()
+                    alias_map: Dict[str, str] = {}
+                    for idx, line_s in enumerate(lines):
+                        lineno = idx + 1
+                        # const _ = require('lodash') or import jwt from 'jsonwebtoken'
+                        req_m = re.search(
+                            r"""(?:const|let|var)\s+([a-zA-Z_$]\w*)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)""",
+                            line_s,
+                        )
+                        if req_m:
+                            alias, pkg = req_m.group(1), req_m.group(2).lower()
+                            imported_packages.setdefault(pkg, (rel_path, lineno))
+                            alias_map[alias] = pkg
+                        imp_m = re.search(r"""import\s+([a-zA-Z_$]\w*)\s+from\s+['"]([^'"]+)['"]""", line_s)
+                        if imp_m:
+                            alias, pkg = imp_m.group(1), imp_m.group(2).lower()
+                            imported_packages.setdefault(pkg, (rel_path, lineno))
+                            alias_map[alias] = pkg
+
+                        for alias, pkg in alias_map.items():
+                            for call_m in re.finditer(rf"\b{re.escape(alias)}\s*\.\s*([a-zA-Z_]\w*)\s*\(", line_s):
+                                sym = call_m.group(1)
+                                library_calls.append((rel_path, "<js_handler>", pkg, sym, lineno))
+                except Exception:
+                    pass
+
+            elif fname.endswith(".java"):
+                try:
+                    active_java_pkgs: Set[str] = set()
+                    # Stream line-by-line (8 MB buffer) so multi-GB .java files stay O(1) RAM
+                    with open(full_path, "r", encoding="utf-8", errors="ignore", buffering=8 * 1024 * 1024) as f:
+                        for idx, line_s in enumerate(f):
                             lineno = idx + 1
-                            # const _ = require('lodash') or import jwt from 'jsonwebtoken'
-                            req_m = re.search(
-                                r"""(?:const|let|var)\s+([a-zA-Z_$]\w*)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)""",
-                                line_s,
-                            )
-                            if req_m:
-                                alias, pkg = req_m.group(1), req_m.group(2).lower()
-                                imported_packages.setdefault(pkg, (rel_path, lineno))
-                                alias_map[alias] = pkg
-                            imp_m = re.search(r"""import\s+([a-zA-Z_$]\w*)\s+from\s+['"]([^'"]+)['"]""", line_s)
-                            if imp_m:
-                                alias, pkg = imp_m.group(1), imp_m.group(2).lower()
-                                imported_packages.setdefault(pkg, (rel_path, lineno))
-                                alias_map[alias] = pkg
-
-                            for alias, pkg in alias_map.items():
-                                for call_m in re.finditer(rf"\b{re.escape(alias)}\s*\.\s*([a-zA-Z_]\w*)\s*\(", line_s):
+                            stripped = line_s.strip()
+                            if not stripped or stripped.startswith(("//", "/*", "*")):
+                                continue
+                            if stripped.startswith("import "):
+                                for prefix, maven_pkg in MAVEN_IMPORT_PREFIX_MAP.items():
+                                    if prefix in stripped:
+                                        imported_packages.setdefault(maven_pkg, (rel_path, lineno))
+                                        active_java_pkgs.add(maven_pkg)
+                            elif "Class.forName(" in stripped:
+                                any_dynamic_import = True
+                            elif active_java_pkgs and "." in stripped and "(" in stripped:
+                                for call_m in re.finditer(r"\.\s*([a-zA-Z_]\w*)\s*\(", stripped):
                                     sym = call_m.group(1)
-                                    library_calls.append((rel_path, "<js_handler>", pkg, sym, lineno))
-                    except Exception:
-                        pass
+                                    for maven_pkg in active_java_pkgs:
+                                        library_calls.append((rel_path, "<java_method>", maven_pkg, sym, lineno))
+                except Exception:
+                    pass
 
         return imported_packages, library_calls, any_dynamic_import
 
@@ -851,7 +1075,7 @@ class SCAReachabilityEngine:
                     f"{r.method} {r.path_pattern}",
                     f"{r.file_path}:{r.func_name}() [line {r.start_line}]",
                 ]
-                if func_name not in (r.func_name, "<module>", "<js_handler>"):
+                if func_name not in (r.func_name, "<module>", "<js_handler>", "<java_method>"):
                     chain.append(f"{file_path}:{func_name}() [line {line}]")
                 return r, chain
         return None, []
