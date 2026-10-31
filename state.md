@@ -63,3 +63,14 @@
 5. **Idea 5 — `GORDON SHADOW-SURFACE`:** AST-vs-Runtime Differential Route Auditor & Polyglot Dual-Framework (`Python + Node.js/Express`) Engine (`B-7`) — **Score: 8.99 / 10** (`Exists-but-weak`)
 
 - **Council Recommendation:** Build **Idea 1 (`GORDON CORRELATE`)** as the unified flagship platform incorporating the `B-1..B-7` bonus modules from Ideas 2 & 5, the **5-step Reachability-Aware SCA** engine from Idea 4, and the **Gordon AI FAIR ₹ Risk & SEBI CSCRF panel** from Idea 3.
+
+
+---
+
+## Checkpoint 1 Progress & Phase 2 Architecture Update (`31 Oct 2026 · 6:30 PM`)
+
+- **Checkpoint 1 Status:** Completed on branch `phase-1-implementation` (`28/28` automated tests passing in `0.62s`, end-to-end live scan in `0.41s`).
+- **Judge Feedback at Checkpoint 1:**
+  1. **Single-Pass Parsing & Time Complexity:** Confirm DAST never re-parses the codebase and that running SAST + DAST maintains linear `O(N + R)` complexity.
+  2. **Runtime-Verified DAST Scope Reduction:** When the static AST Route Map is verified as an exact replica of the live runtime endpoints (`Code Route == Live Runtime Route`), dynamically prune safe/decoy routes from active DAST fuzzing and probe only SAST-flagged `(route, parameter, CWE)` sinks—while keeping full active DAST probing on any drifted/unmapped runtime routes.
+- **Renewed Plan Location:** See [IMPLEMENTATION_PLAN.md](file:///d:/Mitigata/IMPLEMENTATION_PLAN.md) for the complete Phase 2 → Phase 5 plan for **Person A**.

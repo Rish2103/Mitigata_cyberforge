@@ -138,12 +138,74 @@ class SASTVisitor(ast.NodeVisitor):
         self._var_defs_stack.pop()
         self._func_stack.pop()
 
+    def _infer_param_and_func(self, snippet: str, enclosing_code: str = "") -> Tuple[Optional[str], Optional[str]]:
+        """Infer enclosing function name and HTTP parameter name feeding the sink."""
+        fn_name: Optional[str] = None
+        fn_args: List[str] = []
+        if self._func_stack:
+            fn_node = self._func_stack[-1]
+            fn_name = getattr(fn_node, "name", None)
+            if isinstance(fn_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn_args = [
+                    a.arg for a in fn_node.args.args
+                    if a.arg not in ("self", "cls", "request", "req", "db", "session", "conn", "cursor")
+                ]
+
+        # Map local variable -> request parameter name from AST assignments
+        var_to_param: Dict[str, str] = {}
+        for var_name, val_node in self._current_var_defs.items():
+            if isinstance(val_node, ast.Call) and isinstance(val_node.func, ast.Attribute):
+                if val_node.func.attr in ("get", "getlist") and val_node.args:
+                    first = val_node.args[0]
+                    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                        var_to_param[var_name] = first.value
+            elif isinstance(val_node, ast.Subscript) and isinstance(val_node.slice, ast.Constant):
+                if isinstance(val_node.slice.value, str):
+                    var_to_param[var_name] = val_node.slice.value
+
+        # Also check regex on enclosing_code for var = request.*.get("param")
+        if enclosing_code:
+            for m in re.finditer(
+                r"\b([a-zA-Z_]\w*)\s*=\s*(?:request\.(?:args|form|values|json|GET|POST|query_params)|data|body)\s*(?:\.\s*get\s*\(\s*['\"]([^'\"]+)['\"]|\[\s*['\"]([^'\"]+)['\"]\s*\])",
+                enclosing_code,
+            ):
+                v_id = m.group(1)
+                p_id = m.group(2) or m.group(3)
+                if v_id and p_id:
+                    var_to_param.setdefault(v_id, p_id)
+
+        # Look for interpolated variables {var} in snippet
+        for m_brace in re.finditer(r"\{\s*([a-zA-Z_]\w*)", snippet or ""):
+            tok = m_brace.group(1)
+            if tok in var_to_param:
+                return fn_name, var_to_param[tok]
+            if tok not in ("html", "shlex", "os", "urllib", "self", "request"):
+                return fn_name, tok
+
+        # Check if any mapped variable appears as a token in snippet
+        snippet_tokens = set(re.findall(r"\b[a-zA-Z_]\w*\b", snippet or ""))
+        for v_id, p_id in var_to_param.items():
+            if v_id in snippet_tokens:
+                return fn_name, p_id
+
+        for arg_name in fn_args:
+            if arg_name in snippet_tokens:
+                return fn_name, arg_name
+
+        if len(var_to_param) == 1:
+            return fn_name, next(iter(var_to_param.values()))
+        if len(fn_args) == 1:
+            return fn_name, fn_args[0]
+
+        return fn_name, None
+
     def visit_Return(self, node: ast.Return):
         # Detect direct HTML string returns in route handlers: return f"<h1>Hello {name}</h1>"
         if node.value and self._is_dynamic_string(node.value) and self._contains_html_markup(node.value):
             enclosing_code = self._get_enclosing_function_snippet(node)
             snippet = self._get_contextual_snippet(node, node.value)
             is_safe, reason = DecoyFilter.is_safe_xss(None, enclosing_code)
+            fn_name, param_name = self._infer_param_and_func(snippet, enclosing_code)
             finding = CanonicalFinding(
                 id=_fingerprint_sast("CWE-79", self.rel_path, node.lineno),
                 source=FindingSource.SAST,
@@ -152,6 +214,8 @@ class SASTVisitor(ast.NodeVisitor):
                 severity=Severity.HIGH,
                 file_path=self.rel_path,
                 line=node.lineno,
+                func_name=fn_name,
+                param=param_name,
                 code_snippet=snippet,
                 is_protected_decoy=is_safe,
                 decoy_reason=reason if is_safe else None,
@@ -172,6 +236,7 @@ class SASTVisitor(ast.NodeVisitor):
         enclosing_code = self._get_enclosing_function_snippet(node)
         first_arg = node.args[0] if node.args else None
         snippet = self._get_contextual_snippet(node, first_arg)
+        fn_name, param_name = self._infer_param_and_func(snippet, enclosing_code)
 
         # -------------------------------------------------------------
         # 1. CWE-89: SQL Injection
@@ -191,6 +256,8 @@ class SASTVisitor(ast.NodeVisitor):
                         severity=Severity.CRITICAL,
                         file_path=self.rel_path,
                         line=node.lineno,
+                        func_name=fn_name,
+                        param=param_name,
                         code_snippet=snippet,
                         is_protected_decoy=is_safe,
                         decoy_reason=reason if is_safe else None,
@@ -230,6 +297,8 @@ class SASTVisitor(ast.NodeVisitor):
                         severity=Severity.CRITICAL,
                         file_path=self.rel_path,
                         line=node.lineno,
+                        func_name=fn_name,
+                        param=param_name,
                         code_snippet=snippet,
                         is_protected_decoy=is_safe,
                         decoy_reason=reason if is_safe else None,
@@ -251,6 +320,8 @@ class SASTVisitor(ast.NodeVisitor):
                     severity=Severity.HIGH,
                     file_path=self.rel_path,
                     line=node.lineno,
+                    func_name=fn_name,
+                    param=param_name,
                     code_snippet=snippet,
                     is_protected_decoy=is_safe,
                     decoy_reason=reason if is_safe else None,
@@ -275,6 +346,8 @@ class SASTVisitor(ast.NodeVisitor):
                         severity=Severity.HIGH,
                         file_path=self.rel_path,
                         line=node.lineno,
+                        func_name=fn_name,
+                        param=param_name,
                         code_snippet=snippet,
                         is_protected_decoy=is_safe,
                         decoy_reason=reason if is_safe else None,
@@ -309,6 +382,8 @@ class SASTVisitor(ast.NodeVisitor):
                         severity=Severity.MEDIUM,
                         file_path=self.rel_path,
                         line=node.lineno,
+                        func_name=fn_name,
+                        param=param_name,
                         code_snippet=snippet,
                         is_protected_decoy=is_safe,
                         decoy_reason=reason if is_safe else None,
@@ -349,6 +424,7 @@ class SASTVisitor(ast.NodeVisitor):
                         and val.lower() not in ("none", "null", "changeme", "placeholder", "your_api_key", "example")
                     ):
                         masked_snippet = self._get_snippet(node.lineno, getattr(node, "end_lineno", node.lineno))
+                        fn_name = getattr(self._func_stack[-1], "name", None) if self._func_stack else None
                         finding = CanonicalFinding(
                             id=_fingerprint_sast("CWE-798", self.rel_path, node.lineno),
                             source=FindingSource.SAST,
@@ -357,6 +433,7 @@ class SASTVisitor(ast.NodeVisitor):
                             severity=Severity.HIGH,
                             file_path=self.rel_path,
                             line=node.lineno,
+                            func_name=fn_name,
                             code_snippet=masked_snippet,
                             is_protected_decoy=False,
                         )
@@ -374,6 +451,25 @@ class SASTScanner:
     def __init__(self, root_dir: str, route_mapper: Optional[Any] = None):
         self.root_dir = os.path.abspath(root_dir)
         self.route_mapper = route_mapper
+
+    def scan_directory(
+        self,
+        reachable_files: Optional[Set[str]] = None,
+        route_mapper: Optional[Any] = None,
+    ) -> List[CanonicalFinding]:
+        """Alias for `scan()` used by CLI and integration runners."""
+        active_mapper = route_mapper or self.route_mapper
+        if reachable_files is None and active_mapper is not None and hasattr(active_mapper, "get_reachable_files"):
+            reachable_files = active_mapper.get_reachable_files()
+        return self.scan(reachable_files=reachable_files, route_mapper=active_mapper)
+
+    def ingest_sarif_file(self, sarif_path: Union[str, Dict[str, Any]]) -> List[CanonicalFinding]:
+        """Alias for `from_sarif`."""
+        return self.from_sarif(sarif_path)
+
+    def ingest_bandit_file(self, bandit_path: Union[str, Dict[str, Any]]) -> List[CanonicalFinding]:
+        """Alias for `from_bandit`."""
+        return self.from_bandit(bandit_path)
 
     def scan(
         self,

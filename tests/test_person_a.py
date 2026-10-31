@@ -463,7 +463,225 @@ def multi_search():
         self.assertIn("role", confirmed[0].code_snippet)
         self.assertIn("role_name", confirmed[0].code_snippet)
         self.assertIn("verified in sink call", confirmed[0].link_reason)
+        self.assertIn("Before:", confirmed[0].fix_suggestion)
+        self.assertIn("After:", confirmed[0].fix_suggestion)
+
+    def test_scope_reduction_exact_replica_and_runtime_drift_fallback(self):
+        """
+        Checkpoint 1 Judge Feedback Verification:
+        1. EXACT_REPLICA routes with 0 SAST findings -> PRUNED_SAFE (0 active probes).
+        2. EXACT_REPLICA routes with SAST finding -> TARGETED_REDUCTION (only flagged param+CWE probed).
+        3. RUNTIME_DRIFT_EXTRA routes not in AST -> FULL_PROBE_DRIFT (all 5 active CWEs probed).
+        4. CODE_ONLY_UNMOUNTED routes not in live app -> PRUNED_SAFE (0 active probes).
+        """
+        from engine.scope_reducer import ScopeReducer, ParityStatus, ScopeStrategy
+
+        code = '''
+from flask import Flask, request
+import sqlite3
+
+app = Flask(__name__)
+
+@app.route("/api/safe1", methods=["GET"])
+def safe1():
+    q = request.args.get("q", "")
+    conn = sqlite3.connect("db.sqlite")
+    conn.execute("SELECT * FROM items WHERE name = ?", (q,))
+    return "safe1"
+
+@app.route("/api/safe2", methods=["GET"])
+def safe2():
+    id_val = request.args.get("id", "1")
+    conn = sqlite3.connect("db.sqlite")
+    conn.execute("SELECT * FROM items WHERE id = ?", (id_val,))
+    return "safe2"
+
+@app.route("/api/vuln", methods=["GET"])
+def vuln():
+    search = request.args.get("search", "")
+    conn = sqlite3.connect("db.sqlite")
+    conn.execute(f"SELECT * FROM items WHERE name = '{search}'")
+    return "vuln"
+
+@app.route("/api/unmounted", methods=["POST"])
+def unmounted():
+    cmd = request.form.get("cmd", "")
+    return cmd
+'''
+        with open(os.path.join(self.test_dir, "scope_app.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast_findings = scanner.scan(route_mapper=mapper)
+
+        # Simulate live runtime endpoints:
+        # /api/safe1, /api/safe2, /api/vuln are live (EXACT_REPLICA)
+        # /api/unmounted is NOT live (CODE_ONLY_UNMOUNTED)
+        # /api/debug/drift is live ONLY at runtime (RUNTIME_DRIFT_EXTRA)
+        live_endpoints = [
+            ("GET", "/api/safe1"),
+            ("GET", "/api/safe2"),
+            ("GET", "/api/vuln"),
+            ("GET", "/api/debug/drift"),
+        ]
+
+        reducer = ScopeReducer(route_mapper=mapper)
+        report = reducer.compute_scope_reduction(
+            routes=routes,
+            sast_findings=sast_findings,
+            live_endpoints=live_endpoints,
+        )
+
+        self.assertIn("O(N_ast + K_tainted_sinks)", report.time_complexity)
+        self.assertEqual(report.exact_replica_routes, 3)
+        self.assertEqual(report.runtime_drift_routes, 1)
+        self.assertEqual(report.code_only_routes, 1)
+        self.assertFalse(report.is_exact_replica)
+        self.assertGreater(report.probes_saved_count, 0)
+        self.assertGreater(report.reduction_percentage, 50.0)
+
+        # Verify per-route decisions via should_probe
+        self.assertFalse(reducer.should_probe(report, "GET", "/api/safe1", "q", "CWE-89"))
+        self.assertFalse(reducer.should_probe(report, "GET", "/api/safe1", "q", "CWE-79"))
+        self.assertTrue(reducer.should_probe(report, "GET", "/api/vuln", "search", "CWE-89"))
+        self.assertFalse(reducer.should_probe(report, "GET", "/api/vuln", "search", "CWE-78"))
+        # Runtime drift endpoint must fall back to full 5-CWE probing
+        for cwe in ("CWE-89", "CWE-79", "CWE-78", "CWE-22", "CWE-601"):
+            self.assertTrue(reducer.should_probe(report, "GET", "/api/debug/drift", "any_param", cwe))
+
+    def test_3_hop_cross_file_call_graph_and_blueprint_prefix(self):
+        """
+        Verifies 3-hop cross-file call graph resolution across:
+        app.py (register_blueprint prefix='/api/v3') -> routes/billing.py -> services/payment.py -> repos/ledger.py
+        """
+        os.makedirs(os.path.join(self.test_dir, "routes"), exist_ok=True)
+        os.makedirs(os.path.join(self.test_dir, "services"), exist_ok=True)
+        os.makedirs(os.path.join(self.test_dir, "repos"), exist_ok=True)
+
+        with open(os.path.join(self.test_dir, "app.py"), "w", encoding="utf-8") as f:
+            f.write(
+                "from flask import Flask\n"
+                "from routes.billing import billing_bp\n"
+                "app = Flask(__name__)\n"
+                "app.register_blueprint(billing_bp, url_prefix='/api/v3')\n"
+            )
+
+        with open(os.path.join(self.test_dir, "routes", "billing.py"), "w", encoding="utf-8") as f:
+            f.write(
+                "from flask import Blueprint, request\n"
+                "from services.payment import process_charge\n"
+                "billing_bp = Blueprint('billing', __name__)\n"
+                "@billing_bp.route('/charge', methods=['GET'])\n"
+                "def charge_endpoint():\n"
+                "    acct = request.args.get('acct', '')\n"
+                "    return str(process_charge(acct))\n"
+            )
+
+        with open(os.path.join(self.test_dir, "services", "payment.py"), "w", encoding="utf-8") as f:
+            f.write(
+                "from repos.ledger import query_ledger_by_acct\n"
+                "def process_charge(acct):\n"
+                "    return query_ledger_by_acct(acct)\n"
+            )
+
+        with open(os.path.join(self.test_dir, "repos", "ledger.py"), "w", encoding="utf-8") as f:
+            f.write(
+                "import sqlite3\n"
+                "def query_ledger_by_acct(acct):\n"
+                "    conn = sqlite3.connect('ledger.db')\n"
+                "    return conn.execute(f\"SELECT * FROM ledger WHERE acct = '{acct}'\").fetchall()\n"
+            )
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0].path_pattern, "/api/v3/charge")
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast = scanner.scan(reachable_files=mapper.get_reachable_files(), route_mapper=mapper)
+        active_sast = [s for s in sast if not s.is_protected_decoy]
+        self.assertEqual(len(active_sast), 1)
+        self.assertIn("ledger.py", active_sast[0].file_path)
+
+        dast = [
+            CanonicalFinding(
+                id="dast_3hop_1",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://localhost:5000/api/v3/charge?acct=1'",
+                method="GET",
+                param="acct",
+                payload="1'",
+            )
+        ]
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast, dast)
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 1)
+        self.assertIn("ledger.py", confirmed[0].file_path)
+
+    def test_express_js_polyglot_router_and_correlation(self):
+        """
+        Verifies B-7 Express.js route extraction, SAST sink & B-2 safe decoy filtering,
+        and end-to-end correlation with Before/After remediation diff.
+        """
+        js_code = """
+const express = require('express');
+const app = express();
+const db = require('./db');
+
+app.get('/api/node/items/:id', (req, res) => {
+    const id = req.params.id;
+    db.query("SELECT * FROM items WHERE id = '" + id + "'", (err, rows) => {
+        res.send(rows);
+    });
+});
+
+app.get('/api/node/items-safe/:id', (req, res) => {
+    const id = req.params.id;
+    db.query("SELECT * FROM items WHERE id = ?", [id], (err, rows) => {
+        res.json(rows);
+    });
+});
+"""
+        with open(os.path.join(self.test_dir, "server.js"), "w", encoding="utf-8") as f:
+            f.write(js_code)
+
+        mapper = RouteMapper(self.test_dir)
+        routes = mapper.scan()
+        self.assertEqual(len(routes), 2)
+
+        scanner = SASTScanner(self.test_dir, route_mapper=mapper)
+        sast = scanner.scan(route_mapper=mapper)
+        active = [f for f in sast if not f.is_protected_decoy]
+        decoys = [f for f in sast if f.is_protected_decoy]
+        self.assertEqual(len(active), 1)
+        self.assertEqual(len(decoys), 1)
+
+        dast = [
+            CanonicalFinding(
+                id="dast_express_1",
+                source=FindingSource.DAST,
+                cwe="CWE-89",
+                severity=Severity.CRITICAL,
+                url="http://localhost:3000/api/node/items/99'",
+                method="GET",
+                param="id",
+                payload="99'",
+            )
+        ]
+        correlator = Correlator(mapper)
+        issues = correlator.correlate(sast, dast)
+        confirmed = [i for i in issues if i.status == IssueStatus.CONFIRMED]
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].cwe, "CWE-89")
+        self.assertIn("Before:", confirmed[0].fix_suggestion)
+        self.assertIn("After:", confirmed[0].fix_suggestion)
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,159 +1,167 @@
-# CyberForge (Mitigata Hackathon) — 24-Hour Phase-Wise Implementation Plan
-**Track:** `PROBLEM 06 · FLAGSHIP` — SAST and DAST Correlation (`GORDON CORRELATE`)  
+# CyberForge (Mitigata Hackathon) — 24-Hour Phase-Wise Implementation Plan (Renewed Post-Checkpoint 1)
+**Track:** `PROBLEM 06 · FLAGSHIP` — SAST and DAST Correlation (`CYBERFORGE CORRELATE` / `GORDON CORRELATE`)  
 **Format:** 24-Hour Overnight Sprint · Team of 2 (`Person A` + `Person B`)  
-**Current Time:** `1:30 PM (Day 1)` → **1st Checkpoint:** `4:00 PM (Day 1)` → **2nd Checkpoint:** `9:00 AM (Day 2)` → **Build Clock Closes:** `11:00 AM (Day 2)`
+**Current Status:** **Phase 1 & Checkpoint 1 Completed (`6:30 PM Day 1`)** → **Active Sprint: Phase 2 (`6:30 PM – 1:00 AM`)** → **Checkpoint 2 (`1:00 AM / 9:00 AM`)** → **Final Submission (`11:00 AM Day 2`)**
+
+---
+
+## 0. Checkpoint 1 Status & Judge Feedback Integration (`6:30 PM Update`)
+
+### 0.1 What Is Already Completed & Verified on Branch `phase-1-implementation`
+- **Unified Schema & Target Safety Lock:** `core/schemas.py` and `core/config.py` (`localhost` / `127.0.0.1` lock, `follow_redirects=False`).
+- **Person A Core Engines (v1 Complete):**
+  - `engine/route_mapper.py`: Polyglot AST Route Mapper (Flask, FastAPI, Django, Express.js) + 1-hop helper tracer.
+  - `engine/sast_scanner.py`: AST Taint & Sink Scanner across all 6 CWEs (`CWE-89`, `79`, `78`, `22`, `601`, `798`) + SARIF v2.1.0 & Bandit JSON importer.
+  - `engine/decoy_filter.py`: `B-2` Safe Decoy Filter suppressing parameterised SQL, `shell=False`, `shlex.quote`, `realpath`/`secure_filename`, allowlists, and dead unreachable code.
+  - `engine/correlator.py`: Multi-Signal Deterministic Correlator (`Confirmed`, `Runtime only`, `Code only` with `0% Wrong Links` hard vetoes).
+  - `engine/sca_reachability.py`: 5-Step Reachability-Aware SCA (`Reachable`, `Imported-only`, `Present-only`, `Unknown` + supply-chain checks).
+- **Person B Core Engines (v1 Complete):**
+  - `engine/dast_scanner.py`, `api/db.py`, `api/main.py`, `ui/index.html`.
+- **Verification:** `28/28` pytest unit & integration tests passing in `0.62s`; end-to-end live scan running in `0.41s`.
+
+### 0.2 Judge Feedback from Checkpoint 1 (Mandatory Phase 2 Architectural Addition)
+During Checkpoint 1 evaluation, the judge asked two critical algorithmic questions:
+1. **Single-Pass Parsing & Time Complexity:** *"Does DAST re-analyse the whole codebase again? Doesn't running SAST and DAST separately increase the time complexity of the project?"*
+2. **Runtime-Verified Scope Reduction:** *"If the output of SAST/code is an exact replica of the runtime, then only do the scope reduction of the current DAST scope."*
+
+#### How We Solve This in Phase 2 (`Runtime-Verified Adaptive DAST Scope Reduction`)
+```mermaid
+flowchart LR
+    A["1. Single-Pass AST Route Mapper<br/>Parses code ONCE in O(N)<br/>Produces RouteEntry Table"] --> B["2. SAST + Decoy Filter<br/>Classifies every Route into:<br/>• Tainted Sink (CWE + Param)<br/>• Verified Safe / Decoy"]
+    B --> C{"3. Runtime Parity Check<br/>Is Live Server Route an<br/>Exact Replica of AST Route?"}
+    C -->|"YES (Exact Replica)"| D["✂️ Scope Reduction Active!<br/>• Prune 100% of Safe/Decoy routes<br/>• Probe ONLY SAST-flagged (Route, Param, CWE)<br/>(~85% fewer HTTP requests!)"]
+    C -->|"NO (Runtime Drift / Extra Route)"| E["🔍 Full Probe on Delta Routes<br/>Run full 5-CWE active probing<br/>ONLY on unmapped/drifted live routes"]
+```
 
 ---
 
 ## 1. Team of 2 Role Split (Zero Merge-Conflict Boundary)
 
-To move at maximum speed without stepping on each other's files, split the system along a **single JSON/Python data contract (`schemas.py`)** agreed upon in the first 15 minutes:
-
 | Role | Owner | Core Ownership (Files You Touch) | PRD Requirements Owned |
 | :--- | :--- | :--- | :--- |
-| **Person A — Static Intelligence, AST & Correlation Engine Lead** | **Member 1** | `engine/route_mapper.py`, `engine/sast_scanner.py`, `engine/decoy_filter.py`, `engine/correlator.py`, `engine/sca_reachability.py` | **`FR-1`** (SAST Scan), **`FR-4`** (AST Route Map + Call Graph), **`FR-5`** (Multi-Signal Correlator), **`FR-6`** (Duplicate Merger), **`B-2`** (Safe Decoy Killer), **`B-3`** (Link Explanation), **`B-7`** (2nd Language Adapter), **Page 4 Bonus** (5-Step Reachability-Aware SCA) |
-| **Person B — Runtime DAST Engine, API/Storage & Dashboard Lead** | **Member 2** | `engine/dast_scanner.py`, `engine/auto_verify.py`, `api/main.py`, `api/db.py`, `api/exporters.py`, `ui/`, `docker-compose.yml`, `README.md` | **`FR-2`** (2-Phase DAST Scan: Active + Passive Runtime-Only), **`FR-3`** (Common Finding Schema), **`FR-7`** (3-Bucket Labels), **`FR-8`** (Issue Detail View), **`FR-9`** (Prioritised Risk Score), **`FR-10`** (FastAPI + UI + CLI), **`B-1`** (Auto-Verify), **`B-4`** (Fix Suggestions), **`B-5`** (Scan Diffing), **`B-6`** (SARIF Export & CI Gate) |
+| **Person A — Static Intelligence, AST, Scope Reduction & Correlation Lead** | **Member 1** | `engine/route_mapper.py`, `engine/sast_scanner.py`, `engine/decoy_filter.py`, `engine/scope_reducer.py` *(new)*, `engine/correlator.py`, `engine/sca_reachability.py`, `tests/test_person_a.py` | **`FR-1`** (SAST Scan), **`FR-4`** (AST Route Map + Multi-Hop Call Graph), **`FR-5`** (Multi-Signal Correlator + Judge Scope Reduction), **`FR-6`** (Duplicate Merger), **`B-2`** (Safe Decoy Killer), **`B-3`** (Link Explanation), **`B-4`** (AST-Contextual Fix Snippets), **`B-7`** (2nd Language Adapter), **Page 4 Bonus** (5-Step Reachability-Aware SCA) |
+| **Person B — Runtime DAST Engine, API/Storage & Dashboard Lead** | **Member 2** | `engine/dast_scanner.py`, `engine/auto_verify.py`, `api/main.py`, `api/db.py`, `api/sarif_exporter.py`, `ui/index.html`, `docker-compose.yml`, `README.md` | **`FR-2`** (2-Phase DAST Scan consuming Person A's Reduced Scope Plan), **`FR-3`** (Common Finding Schema), **`FR-7`** (3-Bucket Labels), **`FR-8`** (Issue Detail View), **`FR-9`** (Prioritised Risk Score), **`FR-10`** (FastAPI + UI + CLI), **`B-1`** (Auto-Verify), **`B-5`** (Scan Diffing), **`B-6`** (SARIF Export & CI Gate) |
 
 ---
 
-## 2. Git Repository Structure & Branching Workflow
+## 2. Detailed Renewed Plan from Phase 2 Onwards — **FOR PERSON A ONLY**
 
-### 2.1 Recommended Repository Layout
-
-```text
-gordon-correlate/
-├── README.md                        # Setup, architecture, open-source disclosure (PRD Rule 2)
-├── docker-compose.yml               # 1-command startup for judges (PRD Page 4 "Must run easily")
-├── requirements.txt                 # FastAPI, uvicorn, httpx, tree-sitter, semgrep/bandit, pydantic
-├── cli.py                           # CLI entrypoint + CI exit-code gate (FR-10, B-6)
-│
-├── core/                            # LOCKED AT 1:45 PM (Shared by Person A & Person B)
-│   ├── __init__.py
-│   ├── schemas.py                   # FR-3 Canonical Finding, RouteEntry, CorrelatedIssue models
-│   └── config.py                    # Localhost/Test-App Scope Guard (PRD Rule 1 safety lock)
-│
-├── engine/                          # PERSON A's Folder (except dast_scanner.py & auto_verify.py)
-│   ├── __init__.py
-│   ├── route_mapper.py              # [Person A] FR-4: AST Route Map + function call graph
-│   ├── sast_scanner.py              # [Person A] FR-1: SAST (CWE-89,79,78,22,601,798) + SARIF/Bandit
-│   ├── decoy_filter.py              # [Person A] B-2: Marks parameterised queries & dead code as safe
-│   ├── dast_scanner.py              # [Person B] FR-2: Async httpx active prober + passive header audit
-│   ├── auto_verify.py               # [Person B] B-1: Targeted runtime probe to upgrade Code-only
-│   ├── correlator.py                # [Person A] FR-5, FR-6, FR-7, FR-9, B-3: Linker & Deduplicator
-│   └── sca_reachability.py          # [Person A] Page 4 Bonus: 5-step Reachability-Aware SCA
-│
-├── api/                             # PERSON B's Folder
-│   ├── __init__.py
-│   ├── db.py                        # [Person B] SQLite persistence + FR-6 idempotent scan storage
-│   ├── main.py                      # [Person B] FR-10: POST /scans, GET /issues, GET /issues/{id}
-│   ├── diff_engine.py               # [Person B] B-5: Compare two scans (new, fixed, still-open)
-│   └── sarif_exporter.py            # [Person B] B-6: Export SARIF v2.1.0
-│
-├── ui/                              # PERSON B's Folder
-│   └── index.html                   # [Person B] FR-8, FR-9: Single-page dark dashboard (Tailwind)
-│
-└── tests/
-    ├── mock_shop_app/               # Mini test app for pre-kickoff / unit testing
-    └── test_correlation.py          # Automated verification of 0% wrong links & 0% false alarms
-```
-
-### 2.2 Git Branching & Merge Rules (For a 2-Person Team)
-
-1. **`main` branch:** Always working, always demoable. Never push broken code directly to `main`.
-2. **Feature branches by owner:**
-   - **Person A branches:** `feat/a-route-map`, `feat/a-sast-core`, `feat/a-correlator`, `feat/a-decoy-filter`, `feat/a-sca-bonus`, `feat/a-second-lang`
-   - **Person B branches:** `feat/b-dast-core`, `feat/b-api-ui`, `feat/b-auto-verify`, `feat/b-scan-diff-sarif`, `feat/b-docker-polish`
-3. **The 15-Minute Contract Lock (`1:30 PM – 1:45 PM`):**
-   - Sit together for 15 minutes, write `core/schemas.py` (`RouteEntry`, `CanonicalFinding`, `CorrelatedIssue`), commit it to `main`, and both pull `main`.
-   - Because Person A works inside `engine/{route_mapper,sast_scanner,decoy_filter,correlator,sca_reachability}.py` and Person B works inside `engine/{dast_scanner,auto_verify}.py`, `api/`, and `ui/`, **you will have 0 merge conflicts for the entire 24 hours**.
-4. **Sync Cadence:** Merge to `main` via fast PRs every **90 minutes** (at `3:15 PM`, `6:30 PM`, `9:00 PM`, `12:00 AM`, `4:00 AM`, `8:00 AM`).
+> **Person A's Mission from `6:30 PM (Day 1)` to `11:00 AM (Day 2)`:**
+> Turn the static, scope-reduction, correlation, and SCA engines into a **bulletproof, judge-proof system** that:
+> 1. Directly answers the Checkpoint 1 Judge's critique via **`engine/scope_reducer.py` (Runtime-Verified SAST-to-DAST Scope Reduction)** with measurable time-complexity telemetry (`probes_without_reduction` vs `probes_after_reduction`, `% scope reduced`).
+> 2. Achieves **100% recall and `0% Wrong Links`** even on complex multi-file apps, Blueprints/APIRouters, path parameters (`/orders/<int:id>`), and the **07:00 AM Unseen App**.
+> 3. Generates **exact before/after code remediation diffs (`B-4`)** and **5-Step SCA Reachability graphs** ready for the UI and SARIF/JSON export.
 
 ---
 
-## 3. Phase-by-Phase Schedule Mapped to the Official CyberForge Agenda
+### PHASE 2 (Person A): `6:30 PM – 10:00 PM` (Day 1 Evening) — **Judge Feedback: Runtime-Verified Scope Reduction & Multi-Hop AST Hardening**
 
-### PHASE 1: `1:30 PM – 4:00 PM` (2.5 Hours) — **Sprint to 1st Checkpoint (Working End-to-End Prototype Without Compromising Architecture)**
+#### Task A2.1 (`6:30 PM – 7:45 PM`): Build `engine/scope_reducer.py` — **Runtime-Verified SAST-to-DAST Adaptive Scope Reduction**
+- **Why:** Directly implements the Checkpoint 1 Judge's requirement: *"If the output of SAST/code is an exact replica of the runtime, then only do the scope reduction of the current DAST scope."*
+- **What Person A Builds in `engine/scope_reducer.py`:**
+  1. **Single-Pass AST Reuse (`0` Re-Parsing):** Takes the already-computed `routes: List[RouteEntry]` and `sast_findings: List[CanonicalFinding]` from memory (proving `O(N)` single-pass execution).
+  2. **Runtime Parity Fingerprinting (`check_runtime_parity`):**
+     - Compares each static `RouteEntry(method, path_pattern, params)` against the live runtime endpoints discovered during DAST's initial crawl/handshake (`live_endpoints: List[Tuple[str, str]]`).
+     - Computes a **Parity Status** per route:
+       - `EXACT_REPLICA`: The route exists in both the AST Route Table and the Live Runtime with matching path pattern and HTTP method.
+       - `RUNTIME_DRIFT_EXTRA`: A live URL exists on the running server that does **not** exist in the static AST Route Table (e.g., hidden debug console, server misconfiguration, or version drift).
+       - `CODE_ONLY_UNMOUNTED`: A route exists in code but returned `404` or is not mounted on the live server.
+  3. **Adaptive DAST Scope Plan (`build_dast_probe_plan`):**
+     - **If `EXACT_REPLICA` AND `0` Active SAST Sinks (or only `B-2` Protected Decoys):**
+       - **Action:** **PRUNE from Active Phase-A Fuzzing!** Do not waste HTTP payloads (`CWE-89, 79, 78, 22, 601`) on routes that SAST already proved are safe in the exact same code!
+     - **If `EXACT_REPLICA` AND SAST Flagged Specific `(param, cwe)` Sinks:**
+       - **Action:** **TARGETED SCOPE REDUCTION!** Restrict DAST Phase-A active probes on that route to **only the specific `(param, cwe)` pairs** flagged by SAST (instead of firing all 5 CWE payload families across all parameters).
+     - **If `RUNTIME_DRIFT_EXTRA` (Not an exact replica of SAST):**
+       - **Action:** **KEEP FULL ACTIVE SCOPE!** Run all 5 CWE active probes on unmapped/drifted runtime endpoints so nothing slips through.
+  4. **Complexity Telemetry Output (`ScopeReductionReport`):**
+     - Outputs exact metrics for the Judge Dashboard:
+       - `naive_probe_count` (e.g., `16 routes × 5 CWEs = 80 active probes`)
+       - `reduced_probe_count` (e.g., `6 targeted SAST sink probes = 6 active probes`)
+       - `scope_reduction_pct` (e.g., **`92.5% reduction in active HTTP traffic`**)
+       - `time_complexity_class`: `"O(N_ast + K_tainted_sinks) — Single-Pass AST"`
 
-> **Goal for 4:00 PM Mentor Checkpoint:** Show mentors a **real, non-faked vertical slice** running end-to-end on the organisers' test app (or a 6-route replica if the test app is still spinning up):
-> 1. Reads the source code to build a real **AST Route Map (`FR-4`)** (`GET /api/orders -> get_orders(), orders.py:80–95`).
-> 2. Runs real **SAST (`FR-1`)** + **Safe Decoy Suppression (`B-2`)** on SQLi (`CWE-89`), XSS (`CWE-79`), and Hard-coded Secrets (`CWE-798`).
-> 3. Runs real **DAST (`FR-2`)** sending live HTTP requests (`GET /api/orders?id=1'`) + passive header checks.
-> 4. Links them via the **Deterministic Correlator (`FR-5`, `FR-6`, `FR-7`, `FR-9`)** into `Confirmed`, `Code only`, and `Runtime only` buckets and displays them on `POST /scans` & `GET /issues` (`FR-10`).
+#### Task A2.2 (`7:45 PM – 9:00 PM`): Harden `engine/route_mapper.py` for Multi-File Call Graphs & Blueprint Prefixes
+- **Why:** The organisers' full benchmark app and the `07:00 AM` unseen app may split routes across `routes/*.py`, `controllers/*.js`, and helper modules `services/*.py` or `db/*.py`.
+- **What Person A Upgrades in `engine/route_mapper.py`:**
+  1. **2-Hop & 3-Hop Inter-Procedural Call Graph:**
+     - Extend helper resolution from 1-hop within the same file to **cross-file imports** (`from services.order_service import fetch_order` $\rightarrow$ traces `get_orders()` in `routes/orders.py` to `fetch_order()` in `services/order_service.py`).
+  2. **Blueprint / APIRouter Prefix Resolution:**
+     - Automatically prepend Flask `Blueprint(..., url_prefix="/api/v1")`, FastAPI `include_router(..., prefix="/api/v1")`, and Express `app.use("/api/v1", router)` prefixes so `/orders` becomes `/api/v1/orders` and matches DAST URLs 100% of the time.
+  3. **Path Parameter & Body Parameter Extraction:**
+     - Extract parameters not just from `request.args.get("id")`, but also from path templates (`/orders/<int:order_id>`, `/orders/{order_id}`, `/orders/:order_id`), JSON bodies (`request.json["id"]`, `req.body.id`), and Pydantic models.
 
-#### Minute-by-Minute Breakdown (`1:30 PM – 4:00 PM`)
-
-| Time Window | Person A (Static, AST & Correlation) | Person B (Runtime DAST, API & UI) |
-| :--- | :--- | :--- |
-| **`1:30 – 1:45 PM`**<br>*(15 mins — Together)* | **Lock `core/schemas.py` & `core/config.py` on `main`:**<br>• Define `RouteEntry(method, path_pattern, regex, file, func_name, start_line, end_line, params, called_funcs)`<br>• Define `CanonicalFinding(source="SAST"\|"DAST", cwe="CWE-89", severity, file, line, snippet, url, method, param, payload, evidence, is_protected_decoy)`<br>• Define `CorrelatedIssue(id, status="Confirmed"\|"Code only"\|"Runtime only", cwe, severity, risk_score, sast_evidence, dast_evidence, link_reason, fix_suggestion)` | **Initialize Repo + FastAPI Skeleton (`api/main.py`, `api/db.py`):**<br>• Set up SQLite tables (`scans`, `findings`, `issues`)<br>• Enforce **Target Safety Lock (`core/config.py`)**: DAST refuses any URL not matching `localhost`, `127.0.0.1`, or the local Docker test-app container. |
-| **`1:45 – 2:35 PM`**<br>*(50 mins — Hack Hours)* | **Build `engine/route_mapper.py` (`FR-4`):**<br>• Use Python's built-in `ast` module to parse all `.py` files in the target folder.<br>• Extract Flask (`@app.route`, `@bp.get/post`), FastAPI (`@app.get/post`), and Django (`path()`) routes.<br>• Record `file`, `function_name`, `lineno`, `end_lineno`, parameter names (`request.args.get('id')`), and 1-hop helper calls (`db.query_orders()`). | **Build `engine/dast_scanner.py` (`FR-2` Core):**<br>• Build async `httpx` scanner that takes the target base URL + `RouteEntry` list.<br>• Implement **SQLi (`CWE-89`)** probe (`' OR '1'='1`, `1'`) checking for DB error signatures / boolean diffs.<br>• Implement **XSS (`CWE-79`)** probe (`<script>gordon_canary_79</script>`) checking unescaped reflection.<br>• Implement **Phase B Passive Header Check** (`Missing CSP / X-Frame-Options / HttpOnly cookie`) so `Runtime only` (`FR-7`) works at Checkpoint 1! |
-| **`2:35 – 3:15 PM`**<br>*(40 mins — Hack Hours)* | **Build `engine/sast_scanner.py` (`FR-1`) + `engine/decoy_filter.py` (`B-2`) + `engine/correlator.py` (`FR-5`–`FR-9`):**<br>• AST detector for `CWE-89` (f-string / `%` / `+` SQL queries), `CWE-79` (unescaped template/HTML return), `CWE-798` (hard-coded API keys/passwords).<br>• **`B-2` Decoy Filter:** If `cursor.execute(query, (param,))` has a 2nd tuple/list argument, mark `is_protected_decoy=True` and suppress!<br>• **`FR-5` Correlator:** Join `DAST` and `SAST` when `dast.cwe == sast.cwe` AND `dast.url` matches `RouteEntry` covering `sast.file:sast.line` (or its called helper). Populate `B-3` `link_reason`. | **Build `api/main.py` (`FR-10`) + `ui/index.html` (`FR-8`, `FR-9`):**<br>• Implement `POST /scans` (runs `route_mapper` → `sast_scanner` → `dast_scanner` → `correlator`, saves to SQLite).<br>• Implement `GET /issues` (returns prioritised list: `Confirmed` first, then by risk score `FR-9`) and `GET /issues/{id}` (`FR-8` detail).<br>• Build clean 1-page UI showing: Summary counters (`Confirmed`, `Code only`, `Runtime only`, `Safe Decoys Suppressed`), the Route Map table (`FR-4`), and expandable Issue Detail cards (`FR-8`). |
-| **`3:15 – 3:30 PM`**<br>*(15 mins — Integration)* | **Merge `feat/a-*` and `feat/b-*` into `main`:**<br>• Run end-to-end scan on the test app.<br>• Verify `FR-6` idempotency: click "Run Scan" twice and prove issue count does NOT double! | **Prep 3-Minute Mentor Demo Script:**<br>• Keep browser tab open on `http://localhost:8000` + terminal ready to run `POST /scans`. |
-| **`3:30 – 4:00 PM`**<br>*(Hi-Tea & Snacks)* | Quick refresh + sanity-check demo before mentors arrive at `4:00 PM`. | Quick refresh + verify Docker / local ports are stable. |
-
-#### What You Show Mentors at `4:00 PM` (1st Checkpoint)
-1. *"Correlation is what the PRD judges most, so we built the **AST Route-to-Sink Mapper (`FR-4`)** and **Deterministic Correlator (`FR-5`)** first instead of a hard-coded wrapper."*
-2. Live click **Scan**: show a **`Confirmed` SQL Injection (`CWE-89`)** linking `GET /api/orders?id=1'` directly to `orders.py:88` with the `B-3` explanation badge (`Same CWE-89 + Route /api/orders handled by get_orders() lines 80-95 + Param id`).
-3. Show a **`Code only` Hard-coded Secret (`CWE-798`)**, a **`Runtime only` Missing Security Header**, and a **Suppressed Safe Decoy (`B-2` parameterised query)**—proving all 3 buckets (`FR-7`) and decoy suppression work at 4:00 PM!
-
----
-
-### PHASE 2: `4:00 PM – 9:00 PM` (Day 1 Evening) — **Full 6-CWE Coverage, Auth Handling & `B-1` Auto-Verify**
-
-*Agenda Context: `4:00–7:00 PM` Hack Hours & 1st Checkpoint · `7:00–7:30 PM` Icebreaker 1 · `7:30–9:00 PM` Hack Hours · `9:00–10:00 PM` Dinner.*
-
-**Goal by 9:00 PM Dinner:** Hit the **"Great"** column on **Code Detection (`>85%` of 30 code bugs)**, **Runtime Detection (`>80%` of 26 runtime bugs)**, **Correct Links (`>80%` of 20 pairs)**, **Wrong Links (`<5%` = strictly `0` wrong links)**, and **False Alarms (`<10%` on the 8 safe decoys)**.
-
-| Time Window | Person A (Static, AST & Correlation) | Person B (Runtime DAST, API & UI) |
-| :--- | :--- | :--- |
-| **`4:00 – 6:00 PM`** | **Expand SAST (`FR-1`) to All 6 CWEs + External Scanner Adapter:**<br>• Add AST taint rules + optional Semgrep/Bandit JSON/SARIF ingestion for:<br>  1. `CWE-89` (SQLi)<br>  2. `CWE-79` (Reflected & Stored XSS)<br>  3. `CWE-78` (Command Injection: `os.system`, `subprocess(..., shell=True)`)<br>  4. `CWE-22` (Path Traversal: `open()`, `send_file()` with user input)<br>  5. `CWE-601` (Open Redirect: `redirect(request.args.get('next'))`)<br>  6. `CWE-798` (Hard-coded secrets, weak MD5/SHA1 hashes, `debug=True`). | **Expand DAST (`FR-2`) to All 5 Runtime CWEs + Session Auth:**<br>• Add **Auto-Login / Session Jar**: automatically log into the test web shop so authenticated routes (`/orders`, `/checkout`, `/admin`, `/profile`) don't return `401/302`.<br>• Add safe deterministic probes for:<br>  - `CWE-78` (Command Injection: `; echo gordon_cmd_78` / differential output)<br>  - `CWE-22` (Path Traversal: `../../etc/passwd` or known local file read signature)<br>  - `CWE-601` (Open Redirect: `next=https://example.invalid` with `follow_redirects=False` checking `301/302 Location` header). |
-| **`6:00 – 7:00 PM`** | **Harden `B-2` Safe Decoy Filter & Multi-File Call Graph:**<br>• Inspect all ~8 decoys in the test app: ensure parameterised SQL queries, `shlex.quote` / `shell=False`, `os.path.realpath` prefix guards, URL host allowlists, and **dead functions unreachable from any `FR-4` route** are flagged as `Protected / Unreachable (B-2 Suppressed)`.<br>• Extend `route_mapper.py` to trace 2–3 hops across imported helper files (`routes/orders.py` → `services/order_svc.py` → `db/repo.py`). | **Build `engine/auto_verify.py` (Bonus `B-1` — Huge Score Booster):**<br>• For every remaining reachable `Code only` finding (`CWE-89, 79, 78, 22, 601`) that Phase A DAST didn't catch:<br>  1. Read the exact route, HTTP method, parameter name, and expected content-type (`JSON` vs `form` vs `query`) from Person A's `RouteEntry`.<br>  2. Craft a targeted safe verification request and fire it against the running app.<br>  3. If proven, automatically upgrade the issue from `Code only` → **`Confirmed (Auto-Verified via B-1)`**! |
-| **`7:00 – 7:30 PM`** | *Icebreaker Session 1 (30-min refresh)* | *Icebreaker Session 1 (30-min refresh)* |
-| **`7:30 – 9:00 PM`** | **Enforce Zero Wrong Links (`<5%` Target) in `correlator.py`:**<br>• Add hard negative vetoes:<br>  - Never join two findings on different routes (`/cart` vs `/orders`) even if both are `CWE-89`.<br>  - Never join two different parameters (`?id=` vs `?sort=`) unless AST proves both flow to the exact same `file:line` sink.<br>• Run full evaluation against the test app's 36-bug answer key and verify `Wrong links == 0%`. | **Add Bonus `B-4` (Plain-English Fix Suggestions) & Polish `FR-8` Issue Detail Page:**<br>• Generate clear, copy-pasteable code remediation + plain-English explanation for each CWE (`B-4`).<br>• Ensure `GET /issues/{id}` and the UI detail drawer show all 8 mandatory `FR-8` fields: `URL`, `parameter`, `payload`, `file`, `line`, `code snippet`, `CWE`, and `severity` + the `B-3` correlation badge. |
-
----
-
-### PHASE 3: `10:00 PM – 3:00 AM` (Overnight Sprint Part 1) — **Bonus `B-5`, `B-6`, `B-7` & Page 4 Reachability-Aware SCA Bonus**
-
-*Agenda Context: `9:00–10:00 PM` Dinner · `10:00 PM–12:00 AM` Hack Hours · `12:00–12:30 AM` Icebreaker 2 · `12:30–8:00 AM` Overnight Build.*
-
-**Goal by 3:00 AM:** Capture the **Flagship Bonus Points** that no other team will finish—specifically **Page 4's 5-Step Reachability-Aware SCA**, **Bonus `B-7` (2nd Language/Framework for the Unseen App)**, **Bonus `B-5` (Scan Diffing)**, and **Bonus `B-6` (SARIF Export + CI Build Breaker)**.
-
-| Time Window | Person A (Static, AST & Correlation) | Person B (Runtime DAST, API & UI) |
-| :--- | :--- | :--- |
-| **`10:00 PM – 12:00 AM`** | **Build `engine/sca_reachability.py` (Page 4 Bonus — Steps 1 to 3):**<br>1. **Inventory:** Parse `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `package-lock.json` into an SBOM keeping transitive dependency paths.<br>2. **GHSA Match:** Query OSV/GHSA (plus a bundled offline JSON fallback so it works even if venue Wi-Fi drops!) to pull affected versions, fixes, `CVSS`, `EPSS`, and `KEV`.<br>3. **Function Map:** Extract vulnerable symbols from OSV `ecosystem_specific.imports/symbols` AND parse GitHub `fix-commit` diffs (`@@ def func_name`) when GHSA omits functions! | **Build `api/diff_engine.py` (Bonus `B-5`) & `api/sarif_exporter.py` (Bonus `B-6`):**<br>• **`B-5` Scan Comparison:** Endpoint `GET /scans/compare?base=1&target=2` + UI toggle that compares two scans by deterministic issue fingerprint and badges every issue as **`NEW`**, **`FIXED`**, or **`STILL-OPEN`**.<br>• **`B-6` SARIF v2.1.0 + CI Gate:** Endpoint `GET /scans/{id}/sarif` + CLI flag `python cli.py scan --fail-on-confirmed-high` that exits with code `1` (failing a GitHub Actions / CI build) when any `Confirmed` High/Critical issue exists. |
-| **`12:00 – 12:30 AM`** | *Icebreaker Session 2* | *Icebreaker Session 2* |
-| **`12:30 – 3:00 AM`** | **Finish `engine/sca_reachability.py` (Steps 4 & 5) + Bonus `B-7` (2nd Language):**<br>4. **Call Graph:** Link `FR-4` route entry points → app functions → imported library functions.<br>5. **Supply Chain:** Flag typosquats (Levenshtein distance against top PyPI/npm packages), dependency confusion, and unpinned lockfile entries.<br>• **4 Status Labels:** `Reachable`, `Imported-only`, `Present-only`, `Unknown` (**strictly enforce: never downgrade `Unknown`!**).<br>• **Bonus `B-7`:** Add a lightweight **Node.js / Express (`app.get('/api/...', handler)`)** route + sink adapter in `route_mapper.py` & `sast_scanner.py` so you support 2 languages/frameworks! | **Add SCA Reachability & Mitigata Gordon AI Tab to UI:**<br>• Add the **Reachability-Aware SCA** view to `ui/index.html` showing the 4 statuses (`Reachable`, `Imported-only`, `Present-only`, `Unknown`), the visual call path (`Route -> App Function -> Library Symbol`), and supply-chain alerts.<br>• Add a compact **Mitigata Gordon AI Risk Summary bar** (`0 False Positives` decoy filter badge + estimated `₹` exposure on `Confirmed` issues) to align directly with `mitigata.com`. |
+#### Task A2.3 (`9:00 PM – 10:00 PM`): Dinner Break & Quick Sync with Person B
+- Hand off `ScopeReductionReport` schema fields so Person B can display the **"Judge Complexity & Scope Reduction Badge (`92.5% Probes Saved`)"** on the Web UI.
 
 ---
 
-### PHASE 4: `3:00 AM – 8:00 AM` (Overnight Sprint Part 2) — **Shift Rest + Unseen-App Generalisation Torture Test**
+### PHASE 3 (Person A): `10:00 PM – 2:30 AM` (Overnight Sprint Part 1) — **Full 16-Route Benchmark Fixture, Code-Diff Remediation (`B-4`), & SCA Reachability Hardening**
 
-*Agenda Context: `12:30 – 8:00 AM` Overnight Build & Snacks ("teams may rest in shifts").*
+#### Task A3.1 (`10:00 PM – 11:30 PM`): Upgrade `tests/mock_shop_app/` into the Complete 16-Route Live Benchmark App
+- **Why:** Right now `tests/fixtures/vuln_app/app.py` has all 16 routes (6 true vulnerabilities + 10 safe decoys) for static tests, while `tests/mock_shop_app/app.py` only has 5 routes for live HTTP scanning.
+- **What Person A Prepares:**
+  1. Ensure the live target app has all **6 exploitable CWE routes** (`CWE-89` SQLi, `CWE-79` XSS, `CWE-78` Command Injection, `CWE-22` Path Traversal, `CWE-601` Open Redirect, `CWE-798` Hardcoded Secret) **plus all 10 `B-2` Safe Decoy routes** and sample vulnerable lockfiles (`requirements.txt` + `package.json`).
+  2. Verify that running a full scan against `http://127.0.0.1:5000` produces:
+     - **5 `Confirmed` Issues** (`CWE-89`, `79`, `78`, `22`, `601` — each joining SAST `file:line` + live DAST HTTP exploit),
+     - **1 `Code only` Issue** (`CWE-798` Hardcoded Stripe/AWS Secret),
+     - **2+ `Runtime only` Issues** (`CWE-693` Missing CSP, `CWE-614` Cookie missing `HttpOnly`),
+     - **10 `B-2` Protected Decoys Suppressed** (`0% False Alarms`),
+     - **`0% Wrong Links`**,
+     - **5-Step SCA Reachability Findings** (`Reachable`, `Imported-only`, `Present-only`, `Unknown`).
 
-- **`3:00 AM – 4:30 AM`:** **Person A rests (90 mins)** while **Person B** packages `docker-compose.yml`, writes the CLI (`cli.py`), and tests scan speed (`Great target: < 5 minutes`; aim for `< 45 seconds`).
-- **`4:30 AM – 6:00 AM`:** **Person B rests (90 mins)** while **Person A** builds a small **10-endpoint "Unseen Second App" test harness** (using different filenames, Blueprints/APIRouters, and path parameters like `/products/<int:pid>`) and tests `route_mapper.py` + `correlator.py` on it to guarantee **`> 65%` (Great target) on the judges' unseen app**.
-- **`6:00 AM – 8:00 AM` (Together):**
-  - Fix any edge cases where route parameters (`/orders/<id>` vs `/orders?id=1`), Blueprint prefixes (`url_prefix='/api'`), or multi-file imports missed a link.
-  - Double-check all 7 metrics on Page 4 of the PRD against the organiser's answer key.
+#### Task A3.2 (`11:30 PM – 1:00 AM`): Context-Aware Remediation Diff Generator (`B-4`) in `engine/correlator.py`
+- **Why:** Instead of generic text advice, showing the exact **Before (Vulnerable Line) vs. After (Fixed Line)** using the AST snippet (`sf.snippet`, `sf.param`, `sf.func_name`) wins massive usability marks (`25%` of rubric).
+- **What Person A Adds in `engine/correlator.py`:**
+  - Automatically generate a concrete **Before / After Code Patch** for each `Confirmed` and `Code only` issue based on its exact variable name and sink function (e.g., replacing `cursor.execute(f"SELECT * FROM orders WHERE item LIKE '%{q}%'")` with `cursor.execute("SELECT * FROM orders WHERE item LIKE ?", (f"%{q}%",))`).
+
+#### Task A3.3 (`1:00 AM – 2:30 AM`): Harden `engine/sca_reachability.py` (Page 4 Flagship Bonus + Export Contract)
+- **Why:** Page 4 of the PRD awards flagship bonus points for the **5-Step Reachability-Aware SCA Engine**.
+- **What Person A Verifies & Expands in `engine/sca_reachability.py`:**
+  1. **Step 1 (Transitive Lockfile SBOM):** Parse `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `package.json`, and `package-lock.json` with full transitive dependency chains (`App -> Flask -> Jinja2`).
+  2. **Step 2 (Advisory & Risk Metadata):** Match against bundled offline GHSA/OSV database + optional live OSV API (`CVSS`, `EPSS`, `CISA KEV`, fixed version).
+  3. **Step 3 (Vulnerable Symbol & Fix-Commit Diff Extraction):** Extract vulnerable function names from advisory symbols AND git unified diff headers (`@@ ... def func_name`).
+  4. **Step 4 (Route-to-Library Call Graph):** Trace from `RouteEntry` $\rightarrow$ application handler $\rightarrow$ library call site to classify into:
+     - `Reachable` (called on a live route),
+     - `Imported-only` (imported at top of file, never called on a reachable route),
+     - `Present-only` (in lockfile, never imported anywhere in code),
+     - `Unknown` (advisory lists no specific function — **strictly never downgrade severity!**).
+  5. **Step 5 (Supply-Chain Checks):** Typosquatting (Levenshtein distance $= 1$ against popular packages), unpinned versions, and internal namespace confusion.
 
 ---
 
-### PHASE 5: `8:00 AM – 11:00 AM` (Day 2 Morning) — **2nd Checkpoint, Feature Freeze & Submission**
+### PHASE 4 (Person A): `2:30 AM – 7:00 AM` (Overnight Sprint Part 2) — **Rest Shift + Polyglot (`B-7`) & Unseen-App Torture Testing**
 
-*Agenda Context: `8:00–9:00 AM` Breakfast · `9:00–11:00 AM` Hack Hours & 2nd Checkpoint ("Final mentor check-ins; bug fixes only, no new features") · `11:00 AM` Build Clock Closes · `11:00–11:30 AM` Submission & Refining.*
-
-| Time Window | Person A | Person B |
-| :--- | :--- | :--- |
-| **`8:00 – 9:00 AM`** | *Breakfast* | *Breakfast* |
-| **`9:00 – 10:15 AM`**<br>*(2nd Checkpoint — Feature Freeze)* | **Answer-Key & Unseen-App Verification:**<br>• Run the full benchmark suite twice in a row to verify:<br>  - `Code detection > 85%`<br>  - `Runtime detection > 80%`<br>  - `Correct links > 80%`<br>  - `Wrong links < 5%` (`0%`)<br>  - `False alarms < 10%` (`0%`)<br>  - `Run time < 5 min` (`< 45s`)<br>  - Running scan twice creates `0` duplicates (`FR-6`). | **Write `README.md` & Verify Clean Docker Compose Boot:**<br>• Per PRD Page 4 Rules:<br>  1. Clearly list every open-source tool/ruleset used (`Semgrep/Bandit`, `ast`, `tree-sitter`, `httpx`, `OSV API`) and explain that the correlation, route-map, decoy-filter, and auto-verify engines are 100% your original work.<br>  2. Document 1-command startup (`docker compose up --build`) + API examples (`POST /scans`, `GET /issues`, `GET /issues/7`). |
-| **`10:15 – 11:00 AM`** | Freeze `main` branch, tag release `v1.0-submission`, record a 90-second backup video of a live scan in case of projector glitches. | Prepare the 5-slide jury pitch deck highlighting the Answer-Key Scorecard, Live Demo flow, and Reachability-Aware SCA Bonus. |
-| **`11:00 – 11:30 AM`** | **Submit code, prototype, and presentation** before the `11:30 AM` cutoff; rehearse the 3-minute Final Jury pitch for the `12:30 PM` Final Round. | Rehearse live demo handoff with Person A. |
+- **`2:30 AM – 4:15 AM`:** **Person A Rest Shift (105 mins)** while Person B finishes UI wiring.
+- **`4:15 AM – 6:00 AM` (Task A4.1 — Unseen Second App Torture Harness):**
+  - Build a synthetic **"Unseen App Torture Suite"** in `tests/test_person_a.py` testing tricky edge cases the `07:00 AM` unseen app might throw at us:
+    1. **Express.js / Node.js app (`B-7`)** with `app.get('/api/users/:id', ...)` + SQLi (`sequelize.query`) + XSS (`res.send`) + Command Injection (`child_process.exec`).
+    2. **FastAPI app** with `APIRouter(prefix="/v2")`, `Depends()`, and async handlers (`async def`).
+    3. **Django app** with `urlpatterns = [path('items/<int:id>/', views.detail)]`.
+    4. **Same-Route Multi-Sink Disambiguation:** A single route `/checkout` that takes TWO parameters (`?coupon=` and `?note=`) where one is SQLi and one is XSS, or both are SQLi on different lines—verifying our correlator never cross-links them (`0% Wrong Links`).
+- **`6:00 AM – 7:00 AM` (Task A4.2 — Pre-Unseen-App Readiness Check):**
+  - Verify our 1-command CLI runner (`tests/demo_checkpoint1.py`) can point at **any unknown directory + localhost port** and output a full scorecard + JSON/SARIF report in `< 1 second`.
 
 ---
 
-## 4. Non-Negotiable Rules Checklist (Keep Next to Your Laptop)
+### PHASE 5 (Person A): `7:00 AM – 11:00 AM` (Day 2 Morning) — **07:00 AM Unseen App Drop, Checkpoint 2 & Final Jury Readiness**
 
-1. **Disqualification Guard (PRD Page 4 Rule 1):** Point the DAST scanner **ONLY** at the organisers' test app running on your own machine (`localhost` / local Docker network). Set `follow_redirects=False` on `httpx` so an Open Redirect (`CWE-601`) test payload never follows a redirect out to the public internet.
-2. **README Disclosure (PRD Page 4 Rule 2):** Explicitly list all open-source libraries/scanners used in `README.md`.
-3. **Math of `Wrong links < 5%`:** With 20 planted pairs, **1 wrong link = 5.0%**, which fails `"Under 5%"`. Only mark an issue `Confirmed` when `CWE` + `Route/Handler` + `Parameter/Sink` match. If unsure, leave them as separate `Code only` and `Runtime only` items!
-4. **Never Downgrade `Unknown` in SCA (PRD Page 4 Note):** In the Reachability-Aware SCA bonus, if an advisory does not list specific vulnerable functions, label it `Unknown` and **keep its original severity**.
+| Time Window | Person A Action Items |
+| :--- | :--- |
+| **`7:00 – 8:15 AM`**<br>*(Unseen App Drop)* | **Run Engine on Organisers' Unseen App Immediately:**<br>1. Point `RouteMapper` and `SASTScanner` at the unseen app's folder.<br>2. Inspect discovered `RouteEntry` table (`GET /routes`): verify 100% of endpoints and prefixes are mapped.<br>3. If the unseen app uses any custom wrapper decorator or framework idiom, add a 5-line AST pattern in `engine/route_mapper.py` or `engine/sast_scanner.py`.<br>4. Verify `0% Wrong Links` and `0% False Alarms` on the unseen app. |
+| **`8:15 – 9:00 AM`** | *Breakfast & Final Code Freeze on `main`* |
+| **`9:00 – 10:30 AM`**<br>*(2nd Checkpoint)* | **Present Checkpoint 2 to Judges (Specifically Addressing Judge #1's Complexity Critique):**<br>• Show the **Single-Pass AST + Runtime-Verified Scope Reduction** live.<br>• Show the telemetry counter: *"Because 10 of 16 routes matched runtime parity and passed our AST Decoy Filter, DAST pruned 85% of active probes and finished in `0.35s` with `O(N + K)` linear complexity."* |
+| **`10:30 – 11:30 AM`** | **Final Submission & 5-Minute Jury Pitch Rehearsal:**<br>• Run `pytest -v` one final time to confirm 100% green tests.<br>• Rehearse the 2-person live demo and Q&A defenses. |
+
+---
+
+## 3. Summary Checklist of Person A Deliverables for Phase 2+
+
+| # | File Owned by Person A | Phase 2+ Upgrade to Implement (When You Say "Go") | PRD / Judge Requirement |
+| :--- | :--- | :--- | :--- |
+| **1** | `engine/scope_reducer.py` *(New)* | Runtime-Verified SAST-to-DAST Adaptive Scope Reduction + Complexity Telemetry (`probes_saved_pct`, `parity_status`) | **Checkpoint 1 Judge Critique** (Time Complexity & Scope Reduction) |
+| **2** | `engine/route_mapper.py` | Cross-file 2-hop helper import tracing + Flask Blueprint / FastAPI `APIRouter` / Express `app.use` prefix resolution | **`FR-4`**, **`B-7`**, **Unseen App (`>65%`)** |
+| **3** | `engine/sast_scanner.py` | Enhanced taint tracking across helper functions, class methods, and JS/Express routes | **`FR-1`**, **`B-7`** |
+| **4** | `engine/decoy_filter.py` | Expanded sanitizer patterns (`bleach.clean`, `markupsafe.escape`, ORM `.filter_by()`, type-cast `int(id)` guards) | **`B-2` (`0% False Alarms`)** |
+| **5** | `engine/correlator.py` | Integrate `ScopeReductionReport` + Context-Aware Before/After Code Diff generator (`B-4`) | **`FR-5`–`FR-9`**, **`B-3`**, **`B-4`** |
+| **6** | `engine/sca_reachability.py` | Full 5-Step Reachability-Aware SCA export format for UI & SARIF report | **Page 4 Flagship Bonus** |
+| **7** | `tests/test_person_a.py` | Add unit tests for Scope Reduction (`Exact Replica` vs `Runtime Drift`), Blueprint prefixes, and Unseen App torture cases | **Verification (`100% Pass`)** |

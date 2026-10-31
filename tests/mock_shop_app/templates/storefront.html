@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CyberForge Enterprise Tech Store — Live Vulnerable Target App (localhost:5000)</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --panel: #111827;
+      --panel-alt: #1f2937;
+      --border: #374151;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.14);
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.14);
+      --warn: #f59e0b;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding-bottom: 60px;
+    }
+    header {
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-badge {
+      background: var(--danger);
+      color: #fff;
+      font-weight: 800;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .brand h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+    .brand p {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .btn-exploit {
+      background: var(--danger-bg);
+      border-color: var(--danger);
+      color: #fca5a5;
+    }
+    .btn-exploit:hover { background: var(--danger); color: #fff; }
+    .btn-safe {
+      background: var(--success-bg);
+      border-color: var(--success);
+      color: #6ee7b7;
+    }
+    .btn-safe:hover { background: var(--success); color: #052e16; }
+    .btn-primary {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #fff;
+    }
+    .container {
+      max-width: 1340px;
+      margin: 24px auto;
+      padding: 0 24px;
+    }
+    .judge-banner {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .judge-banner code {
+      background: #0f172a;
+      padding: 3px 8px;
+      border-radius: 6px;
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1.55fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (max-width: 1024px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+    .vuln-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .cwe-pill {
+      font-size: 11.5px;
+      font-weight: 800;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      font-family: ui-monospace, monospace;
+    }
+    .route-pill {
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+      color: var(--accent);
+      background: #0f172a;
+      padding: 3px 10px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }
+    .vuln-card h3 {
+      font-size: 16px;
+      margin-bottom: 4px;
+      color: #fff;
+    }
+    .vuln-meta {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .input-row input {
+      flex: 1;
+      background: #090d16;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-family: ui-monospace, monospace;
+      font-size: 13px;
+    }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .inspector {
+      position: sticky;
+      top: 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    }
+    .inspector h2 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status-badge {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-family: ui-monospace, monospace;
+      background: #1e293b;
+      color: var(--accent);
+    }
+    .console-box {
+      background: #05080f;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: #e2e8f0;
+      min-height: 220px;
+      max-height: 360px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 14px;
+    }
+    .render-box {
+      background: #ffffff;
+      color: #0f172a;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 70px;
+      font-size: 13px;
+      border: 2px dashed #64748b;
+    }
+    .crawler-links {
+      margin-top: 24px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .crawler-links a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-badge">Target App · Port 5000</span>
+      <div>
+        <h1>🛒 CyberForge Enterprise Tech Store &amp; Live Vulnerability Lab</h1>
+        <p>Multi-File Flask Storefront (`tests/mock_shop_app`) · 6 Hackathon CWEs + 8 Safe Decoys + Reachable SCA</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-primary" onclick="copyTargetUrl()">📋 Copy `http://localhost:5000` for Scanner</button>
+      <a class="btn" href="http://localhost:8000" target="_blank" rel="noopener">🚀 Open CyberForge Correlate UI (:8000)</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="judge-banner">
+      <div>
+        <strong>🎯 Live Judge Demonstration Workflow:</strong>
+        1) Test any normal feature, live exploit, or safe decoy below on <code>http://localhost:5000</code>.
+        2) Paste <code>./tests/mock_shop_app</code> + <code>http://localhost:5000</code> into <strong>CyberForge Correlate (<code>localhost:8000</code>)</strong> to correlate SAST AST sinks with live DAST exploits in one click!
+      </div>
+      <span id="copyFeedback" style="color: var(--success); font-weight: 700; font-size: 12.5px;"></span>
+    </div>
+
+    <div class="layout">
+      <!-- Left Column: All 6 CWEs + Safe Decoys + SCA -->
+      <div class="cards-grid">
+
+        <!-- 1. CWE-89 SQL Injection -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>1. Order Lookup Portal — SQL Injection (Cross-File 2-Hop Sink)</h3>
+              <div class="vuln-meta">
+                Blueprint Route: <code>routes/orders.py:get_orders()</code> ➔ Helper Sink: <code>services/order_service.py:fetch_order_by_id()</code>
+              </div>
+            </div>
+            <span class="cwe-pill">CWE-89 · CRITICAL</span>
+          </div>
+          <div class="input-row">
+            <input id="sqliInput" type="text" value="1" placeholder="Enter Order ID (e.g. 1 or 1' OR '1'='1)" />
+            <button class="btn btn-primary" onclick="runSqliCustom()">Run Query</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="setAndRunSqli('1', false)">Normal Order (#1)</button>
+            <button class="btn btn-exploit" onclick="setAndRunSqli(&quot;1' OR '1'='1&quot;, false)">💥 Exploit SQLi: Dump All Orders (Tautology)</button>
+            <button class="btn btn-exploit" onclick="setAndRunSqli(&quot;1'&quot;, false)">💥 Exploit SQLi: Trigger SQLite Syntax Error</button>
+            <button class="btn btn-safe" onclick="setAndRunSqli(&quot;1' OR '1'='1&quot;, true)">🛡️ Safe Decoy (/api/orders/safe · Parameterized `?`)</button>
+          </div>
+        </div>
+
+        <!-- 2. CWE-79 Reflected XSS -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>2. Product Catalog Search — Reflected Cross-Site Scripting (XSS)</h3>
+              <div class="vuln-meta">
+                Sink: <code>app.py:search_products()</code> via unescaped <code>render_template_string(f"...{q}...")</code>
+              </div>
+            </div>
+            <span class="cwe-pill">CWE-79 · HIGH</span>
+          </div>
+          <div class="input-row">
+            <input id="xssInput" type="text" value="MacBook Pro M3" placeholder="Search store catalog..." />
+            <button class="btn btn-primary" onclick="runXssCustom()">Search</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="setAndRunXss('MacBook Pro M3', false)">Normal Search</button>
+            <button class="btn btn-exploit" onclick="setAndRunXss(&quot;<img src=x onerror=alert('CWE_79_XSS_CONFIRMED')><b style='color:#dc2626'>[XSS PAYLOAD EXECUTED UNESCAPED]</b>&quot;, false)">💥 Exploit XSS (Unescaped DOM Injection)</button>
+            <button class="btn btn-exploit" onclick="openRawXssTab()">🔗 Open Raw XSS URL in Browser Tab</button>
+            <button class="btn btn-safe" onclick="setAndRunXss(&quot;<script>alert(1)</script><b>Escaped</b>&quot;, true)">🛡️ Safe Decoy (/api/search/safe · `html.escape`)</button>
+          </div>
+        </div>
+
+        <!-- 3. CWE-78 OS Command Injection -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>3. Warehouse Network Diagnostics — OS Command Injection</h3>
+              <div class="vuln-meta">
+                Sink: <code>app.py:ping_warehouse()</code> executing shell command with unquoted <code>host</code> parameter
+              </div>
+            </div>
+            <span class="cwe-pill">CWE-78 · CRITICAL</span>
+          </div>
+          <div class="input-row">
+            <input id="cmdInput" type="text" value="127.0.0.1" placeholder="Warehouse IP / Hostname..." />
+            <button class="btn btn-primary" onclick="runCmdCustom()">Run Ping</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="setAndRunCmd('127.0.0.1', '/api/diagnostics/ping')">Normal Ping (127.0.0.1)</button>
+            <button class="btn btn-exploit" onclick="setAndRunCmd('127.0.0.1 && whoami && echo gordon_cmd_canary_78', '/api/diagnostics/ping')">💥 Exploit Command Injection (`&& whoami`)</button>
+            <button class="btn btn-safe" onclick="setAndRunCmd('127.0.0.1 && whoami', '/api/diagnostics/ping-safe-list')">🛡️ Safe Decoy (`shell=False` Arg List)</button>
+            <button class="btn btn-safe" onclick="setAndRunCmd('127.0.0.1 && whoami', '/api/diagnostics/ping-safe-quote')">🛡️ Safe Decoy (`shlex.quote`)</button>
+          </div>
+        </div>
+
+        <!-- 4. CWE-22 Path Traversal -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>4. Customer Invoice PDF Download — Path Traversal / Arbitrary File Read</h3>
+              <div class="vuln-meta">
+                Sink: <code>app.py:download_invoice()</code> joining unvalidated <code>doc</code> parameter into <code>send_file()</code>
+              </div>
+            </div>
+            <span class="cwe-pill">CWE-22 · HIGH</span>
+          </div>
+          <div class="input-row">
+            <input id="traversalInput" type="text" value="inv.pdf" placeholder="Invoice filename (e.g. inv.pdf)" />
+            <button class="btn btn-primary" onclick="runTraversalCustom()">Download</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="setAndRunTraversal('inv.pdf', '/api/invoices/download')">Normal Invoice (`inv.pdf`)</button>
+            <button class="btn btn-exploit" onclick="setAndRunTraversal('../../../../etc/passwd', '/api/invoices/download')">💥 Exploit Path Traversal (`../../../../etc/passwd`)</button>
+            <button class="btn btn-safe" onclick="setAndRunTraversal('../../../../etc/passwd', '/api/invoices/download-safe-werkzeug')">🛡️ Safe Decoy (`secure_filename`)</button>
+            <button class="btn btn-safe" onclick="setAndRunTraversal('../../../../etc/passwd', '/api/invoices/download-safe-realpath')">🛡️ Safe Decoy (`realpath + startswith`)</button>
+          </div>
+        </div>
+
+        <!-- 5. CWE-601 Open Redirect -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>5. Express Checkout Return — Unvalidated Open Redirect</h3>
+              <div class="vuln-meta">
+                Sink: <code>app.py:checkout_redirect()</code> passing unvalidated <code>next</code> URL into <code>redirect(next_url)</code>
+              </div>
+            </div>
+            <span class="cwe-pill">CWE-601 · MEDIUM</span>
+          </div>
+          <div class="input-row">
+            <input id="redirectInput" type="text" value="/home" placeholder="Next destination URL..." />
+            <button class="btn btn-primary" onclick="runRedirectCustom()">Test Redirect</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="setAndRunRedirect('/home', '/api/checkout/redirect')">Normal Redirect (`/home`)</button>
+            <button class="btn btn-exploit" onclick="setAndRunRedirect('https://gordon-redirect-canary.invalid/phishing-login', '/api/checkout/redirect')">💥 Exploit Open Redirect (External Domain)</button>
+            <button class="btn btn-safe" onclick="setAndRunRedirect('https://gordon-redirect-canary.invalid/phishing-login', '/api/checkout/redirect-safe')">🛡️ Safe Decoy (`startswith('/')` Guard)</button>
+          </div>
+        </div>
+
+        <!-- 6. CWE-798 Code-Only Secrets + Reachable SCA + Runtime-Only Headers/Cookies -->
+        <div class="vuln-card">
+          <div class="card-top">
+            <div>
+              <h3>6. 3-Bucket Proof: Code-Only (`CWE-798`), Runtime-Only (`CWE-693`/`614`), &amp; Reachable SCA</h3>
+              <div class="vuln-meta">
+                Demonstrates why neither SAST nor DAST alone is enough — and how AST Reachability proves vulnerable package usage.
+              </div>
+            </div>
+            <span class="cwe-pill" style="background: rgba(168,85,247,0.2); color: #d8b4fe; border-color: #a855f7;">CWE-798 · CWE-693 · SCA</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-exploit" onclick="inspectRuntimeOnlyHeadersAndCookies()">🔍 Inspect Runtime-Only Bugs (Missing CSP/XFO + Insecure Cookie)</button>
+            <button class="btn btn-primary" onclick="testYamlConfigImport()">📦 Trigger Reachable SCA Sink (`POST /api/config/import` · `yaml.load`)</button>
+            <button class="btn" onclick="showCodeOnlySecretsInfo()">🔑 View Planted Code-Only Secrets (`CWE-798` in `app.py:25-26`)</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Live Exploit Response & DOM Inspector -->
+      <div class="inspector">
+        <h2>
+          <span>📡 Live Target HTTP Response Inspector</span>
+          <span id="httpStatusBadge" class="status-badge">READY</span>
+        </h2>
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">
+          Endpoint Request &amp; Raw Server Output:
+        </div>
+        <div id="consoleOutput" class="console-box">Click any "Normal", "💥 Exploit", or "🛡️ Safe Decoy" button on the left to execute a real HTTP request against http://localhost:5000 and inspect the live proof here.</div>
+
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">
+          Live Browser HTML Preview (for Reflected XSS `CWE-79` vs Safe Escaped Decoy):
+        </div>
+        <div id="liveHtmlPreview" class="render-box">
+          <em>HTML output from <code>/api/search</code> will render here...</em>
+        </div>
+
+        <!-- Direct HTML links & forms so BeautifulSoup4 DAST Crawler discovers all endpoints from "/" -->
+        <div class="crawler-links">
+          <span>DAST Crawler Discovery Links:</span>
+          <a href="/api/orders?id=1">GET /api/orders</a>
+          <a href="/api/orders/safe?id=1">GET /api/orders/safe</a>
+          <a href="/api/search?q=laptop">GET /api/search</a>
+          <a href="/api/search/safe?q=laptop">GET /api/search/safe</a>
+          <a href="/api/invoices/download?doc=inv.pdf">GET /api/invoices/download</a>
+          <a href="/api/checkout/redirect?next=/home">GET /api/checkout/redirect</a>
+        </div>
+        <form action="/api/diagnostics/ping" method="POST" style="display:none;">
+          <input type="text" name="host" value="127.0.0.1" />
+        </form>
+        <form action="/api/config/import" method="POST" style="display:none;">
+          <input type="text" name="config" value="store: cyberforge" />
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function setInspector(method, url, status, bodyText, renderHtml) {
+      const badge = document.getElementById('httpStatusBadge');
+      badge.textContent = `${method} -> HTTP ${status}`;
+      badge.style.color = status >= 400 || bodyText.includes('root:x:0:0') || bodyText.includes('gordon_cmd') ? '#fca5a5' : '#38bdf8';
+      const out = document.getElementById('consoleOutput');
+      out.textContent = `[REQUEST]  ${method} ${url}\n[STATUS]   HTTP ${status}\n${'-'.repeat(56)}\n${bodyText}`;
+      if (renderHtml !== undefined) {
+        document.getElementById('liveHtmlPreview').innerHTML = renderHtml;
+      }
+    }
+
+    async function setAndRunSqli(val, isSafe) {
+      document.getElementById('sqliInput').value = val;
+      const endpoint = isSafe ? '/api/orders/safe' : '/api/orders';
+      const url = `${endpoint}?id=${encodeURIComponent(val)}`;
+      const res = await fetch(url);
+      const text = await res.text();
+      setInspector('GET', url, res.status, text);
+    }
+
+    function runSqliCustom() {
+      const val = document.getElementById('sqliInput').value;
+      setAndRunSqli(val, false);
+    }
+
+    async function setAndRunXss(val, isSafe) {
+      document.getElementById('xssInput').value = val;
+      const endpoint = isSafe ? '/api/search/safe' : '/api/search';
+      const url = `${endpoint}?q=${encodeURIComponent(val)}`;
+      const res = await fetch(url);
+      const text = await res.text();
+      setInspector('GET', url, res.status, text, text);
+    }
+
+    function runXssCustom() {
+      const val = document.getElementById('xssInput').value;
+      setAndRunXss(val, false);
+    }
+
+    function openRawXssTab() {
+      const val = document.getElementById('xssInput').value || "<script>alert('Live Reflected XSS on localhost:5000!')<\/script><h2>Unescaped XSS Executed</h2>";
+      window.open(`/api/search?q=${encodeURIComponent(val)}`, '_blank');
+    }
+
+    async function setAndRunCmd(val, endpoint) {
+      document.getElementById('cmdInput').value = val;
+      const formData = new URLSearchParams();
+      formData.append('host', val);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+      });
+      const text = await res.text();
+      setInspector('POST', `${endpoint} [body: host=${val}]`, res.status, text);
+    }
+
+    function runCmdCustom() {
+      const val = document.getElementById('cmdInput').value;
+      setAndRunCmd(val, '/api/diagnostics/ping');
+    }
+
+    async function setAndRunTraversal(val, endpoint) {
+      document.getElementById('traversalInput').value = val;
+      const url = `${endpoint}?doc=${encodeURIComponent(val)}`;
+      const res = await fetch(url);
+      const text = await res.text();
+      setInspector('GET', url, res.status, text);
+    }
+
+    function runTraversalCustom() {
+      const val = document.getElementById('traversalInput').value;
+      setAndRunTraversal(val, '/api/invoices/download');
+    }
+
+    async function setAndRunRedirect(val, endpoint) {
+      document.getElementById('redirectInput').value = val;
+      const url = `${endpoint}?next=${encodeURIComponent(val)}&inspect=1`;
+      const res = await fetch(url, { redirect: 'manual' });
+      let info = '';
+      try {
+        info = await res.text();
+      } catch (e) {}
+      const report = [
+        `Target Redirect Parameter: next=${val}`,
+        `Endpoint Audited: ${endpoint}`,
+        info || `Browser Redirect Triggered -> Location: ${val}`
+      ].join('\n');
+      setInspector('GET', `${endpoint}?next=${encodeURIComponent(val)}`, res.status || 302, report);
+    }
+
+    function runRedirectCustom() {
+      const val = document.getElementById('redirectInput').value;
+      setAndRunRedirect(val, '/api/checkout/redirect');
+    }
+
+    async function inspectRuntimeOnlyHeadersAndCookies() {
+      const res = await fetch('/home');
+      const csp = res.headers.get('Content-Security-Policy') || '❌ MISSING (CWE-693)';
+      const xfo = res.headers.get('X-Frame-Options') || '❌ MISSING (CWE-1021 Clickjacking)';
+      const XCTO = res.headers.get('X-Content-Type-Options') || '❌ MISSING (CWE-693)';
+      const cookieVal = document.cookie || 'session_id=cf_live_shop_session_2026 (Accessible via JS -> Missing HttpOnly & Secure = CWE-614)';
+      const summary = [
+        '=== PASSIVE DAST RUNTIME-ONLY EVIDENCE (No Single Source Line Sink) ===',
+        `Content-Security-Policy : ${csp}`,
+        `X-Frame-Options         : ${xfo}`,
+        `X-Content-Type-Options  : ${XCTO}`,
+        `document.cookie (JS)    : ${cookieVal}`,
+        '',
+        'Why "Runtime only"? These misconfigurations are observable in live HTTP responses',
+        'by Phase-B DAST, but have no vulnerable sink function in application code.'
+      ].join('\n');
+      setInspector('GET', '/home (Headers & Cookie Audit)', res.status, summary);
+    }
+
+    async function testYamlConfigImport() {
+      const sampleYaml = "store_name: CyberForge Enterprise\nmode: production\nfeature_flags:\n  live_correlation: true";
+      const formData = new URLSearchParams();
+      formData.append('config', sampleYaml);
+      const res = await fetch('/api/config/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+      });
+      const text = await res.text();
+      const out = [
+        '=== PAGE 4 REACHABILITY-AWARE SCA PROOF ===',
+        'Route: POST /api/config/import -> app.py:import_yaml_config()',
+        'Sink : yaml.load(raw_yaml, Loader=yaml.FullLoader) [PyYAML 5.3.1 -> CVE-2020-14343]',
+        'Reachability Status: REACHABLE (Up-ranked to CRITICAL)',
+        '',
+        'Parsed YAML Response from Server:',
+        text
+      ].join('\n');
+      setInspector('POST', '/api/config/import', res.status, out);
+    }
+
+    function showCodeOnlySecretsInfo() {
+      const out = [
+        '=== CODE-ONLY BUCKET PROOF (CWE-798 Hard-Coded Credentials) ===',
+        'File: tests/mock_shop_app/app.py (Lines 25-26)',
+        '  25: STRIPE_LIVE_SECRET_KEY = "sk_live_998877665544332211_mitigata_shop"',
+        '  26: app.config["JWT_SECRET_KEY"] = "jwt_prod_signing_secret_2026_cyberforge"',
+        '',
+        'Why "Code only"? SAST detects these high-entropy secrets in the Python AST,',
+        'but they are never echoed in any HTTP response, so DAST alone cannot see them.'
+      ].join('\n');
+      setInspector('STATIC', 'tests/mock_shop_app/app.py:25-26', 200, out);
+    }
+
+    function copyTargetUrl() {
+      navigator.clipboard.writeText('http://localhost:5000');
+      const el = document.getElementById('copyFeedback');
+      el.textContent = '✓ Copied http://localhost:5000 to clipboard!';
+      setTimeout(() => { el.textContent = ''; }, 3000);
+    }
+  </script>
+</body>
+</html>

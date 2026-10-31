@@ -77,41 +77,133 @@ def _normalize_route_pattern_to_regex(pattern: str) -> str:
 
 class FunctionVisitor(ast.NodeVisitor):
     """
-    Inspects a Python function AST node to extract parameter accesses and called helper functions.
+    Inspects a Python function AST node to extract parameter accesses, parameter sources,
+    and called helper functions.
     """
 
-    def __init__(self, func_node: ast.AST):
+    def __init__(self, func_node: ast.AST, pydantic_models: Optional[Dict[str, List[str]]] = None):
         self.func_node = func_node
         self.parameters: Set[str] = set()
+        self.param_sources: Dict[str, str] = {}
         self.called_funcs: Set[str] = set()
+        self._json_vars: Set[str] = {"data", "body", "payload", "json_data", "req_json"}
+        self._pydantic_models: Dict[str, List[str]] = pydantic_models or {}
 
         if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for arg in func_node.args.args:
-                if arg.arg not in ("self", "cls", "request", "req", "db", "session"):
+            all_args = list(func_node.args.args)
+            defaults = list(func_node.args.defaults)
+            num_no_default = len(all_args) - len(defaults)
+
+            for idx, arg in enumerate(all_args):
+                if arg.arg in ("self", "cls", "request", "req", "db", "session", "background_tasks"):
+                    continue
+
+                default_node = defaults[idx - num_no_default] if idx >= num_no_default else None
+                if isinstance(default_node, ast.Call):
+                    def_fn = ""
+                    if isinstance(default_node.func, ast.Name):
+                        def_fn = default_node.func.id
+                    elif isinstance(default_node.func, ast.Attribute):
+                        def_fn = default_node.func.attr
+
+                    # FastAPI Depends(helper_fn) / Security(helper_fn): register helper in call graph, skip as HTTP param
+                    if def_fn in ("Depends", "Security"):
+                        if default_node.args:
+                            dep_target = default_node.args[0]
+                            if isinstance(dep_target, ast.Name):
+                                self.called_funcs.add(dep_target.id)
+                            elif isinstance(dep_target, ast.Attribute):
+                                self.called_funcs.add(dep_target.attr)
+                        continue
+                    elif def_fn == "Query":
+                        self.param_sources[arg.arg] = "query"
+                    elif def_fn == "Path":
+                        self.param_sources[arg.arg] = "path"
+                    elif def_fn == "Form":
+                        self.param_sources[arg.arg] = "form"
+                    elif def_fn == "Body":
+                        self.param_sources[arg.arg] = "json"
+
+                # If parameter has a Pydantic model type annotation, extract its fields as JSON body params
+                ann_name = ""
+                if isinstance(arg.annotation, ast.Name):
+                    ann_name = arg.annotation.id
+                elif isinstance(arg.annotation, ast.Attribute):
+                    ann_name = arg.annotation.attr
+                if ann_name and ann_name in self._pydantic_models:
+                    self._json_vars.add(arg.arg)
+                    for field_name in self._pydantic_models[ann_name]:
+                        self.parameters.add(field_name)
+                        self.param_sources.setdefault(field_name, "json")
+                else:
                     self.parameters.add(arg.arg)
+
+    def visit_Assign(self, node: ast.Assign):
+        # Track variables assigned from request.get_json() or request.json
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute):
+            if node.value.func.attr == "get_json":
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self._json_vars.add(target.id)
+        elif isinstance(node.value, ast.Attribute) and node.value.attr in ("json", "body", "data"):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._json_vars.add(target.id)
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
         if isinstance(node.func, ast.Name):
             self.called_funcs.add(node.func.id)
+            if node.func.id in ("Depends", "Security") and node.args:
+                dep_arg = node.args[0]
+                if isinstance(dep_arg, ast.Name):
+                    self.called_funcs.add(dep_arg.id)
+                elif isinstance(dep_arg, ast.Attribute):
+                    self.called_funcs.add(dep_arg.attr)
         elif isinstance(node.func, ast.Attribute):
             self.called_funcs.add(node.func.attr)
 
         # Detect request parameter accesses:
         # Flask/Django: request.args.get('param'), request.form.get('param'),
-        # request.values.get('param'), request.json.get('param'), request.GET.get('param'), request.POST.get('param')
+        # request.values.get('param'), request.json.get('param'), request.get_json().get('param')
         if isinstance(node.func, ast.Attribute) and node.func.attr in ("get", "getlist"):
             if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                # Check if receiver is request.<bag> or similar
-                self.parameters.add(node.args[0].value)
+                param_name = node.args[0].value
+                self.parameters.add(param_name)
+                receiver = node.func.value
+                if isinstance(receiver, ast.Attribute):
+                    bag = receiver.attr
+                    if bag in ("args", "GET", "query_params"):
+                        self.param_sources[param_name] = "query"
+                    elif bag in ("form", "POST", "files"):
+                        self.param_sources[param_name] = "form"
+                    elif bag == "json":
+                        self.param_sources[param_name] = "json"
+                elif isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Attribute):
+                    if receiver.func.attr == "get_json":
+                        self.param_sources[param_name] = "json"
+                elif isinstance(receiver, ast.Name) and receiver.id in self._json_vars:
+                    self.param_sources[param_name] = "json"
 
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript):
-        # Detect request.args['param'], request.form['param'], request.GET['param'], request.POST['param'], data['param']
+        # Detect request.args['param'], request.form['param'], request.json['param'], data['param']
         if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            param_name = node.slice.value
             if isinstance(node.value, ast.Attribute):
-                if node.value.attr in ("args", "form", "values", "json", "headers", "cookies", "GET", "POST", "query_params"):
-                    self.parameters.add(node.slice.value)
+                bag = node.value.attr
+                if bag in ("args", "form", "values", "json", "headers", "cookies", "GET", "POST", "query_params"):
+                    self.parameters.add(param_name)
+                    if bag in ("args", "GET", "query_params"):
+                        self.param_sources[param_name] = "query"
+                    elif bag in ("form", "POST"):
+                        self.param_sources[param_name] = "form"
+                    elif bag == "json":
+                        self.param_sources[param_name] = "json"
+            elif isinstance(node.value, ast.Name) and node.value.id in self._json_vars:
+                self.parameters.add(param_name)
+                self.param_sources.setdefault(param_name, "json")
         self.generic_visit(node)
 
 
@@ -125,11 +217,13 @@ class RouteExtractor(ast.NodeVisitor):
         file_path: str,
         rel_path: str,
         global_prefixes: Optional[Dict[str, str]] = None,
+        pydantic_models: Optional[Dict[str, List[str]]] = None,
     ):
         self.file_path = file_path
         self.rel_path = rel_path.replace("\\", "/")
         self.routes: List[RouteEntry] = []
         self.blueprint_prefixes: Dict[str, str] = dict(global_prefixes or {})
+        self.pydantic_models: Dict[str, List[str]] = pydantic_models or {}
         self.django_Pending_routes: List[Tuple[str, str, str]] = []  # (path, target_func_name, rel_path)
 
     def visit_Assign(self, node: ast.Assign):
@@ -150,7 +244,9 @@ class RouteExtractor(ast.NodeVisitor):
                         prefix = str(kw.value.value).rstrip("/")
                 for target in node.targets:
                     if isinstance(target, ast.Name) and prefix:
-                        self.blueprint_prefixes[target.id] = prefix
+                        # Only set local prefix if a combined global prefix wasn't already precomputed
+                        if target.id not in self.blueprint_prefixes:
+                            self.blueprint_prefixes[target.id] = prefix
 
         # Detect Django urlpatterns = [path('orders/<int:id>/', views.get_order), ...]
         for target in node.targets:
@@ -210,11 +306,27 @@ class RouteExtractor(ast.NodeVisitor):
             route_info = self._parse_decorator(decorator)
             if route_info:
                 path_pattern, methods, framework = route_info
-                visitor = FunctionVisitor(node)
+                visitor = FunctionVisitor(node, pydantic_models=self.pydantic_models)
                 visitor.visit(node)
                 end_line = getattr(node, "end_lineno", node.lineno)
 
+                # Extract path parameters from path_pattern and mark them as 'path' source
+                params = set(visitor.parameters)
+                param_sources = dict(visitor.param_sources)
+                for m_conv in re.finditer(r"<(?:\w+:)?(\w+)>", path_pattern):
+                    p_name = m_conv.group(1)
+                    params.add(p_name)
+                    param_sources[p_name] = "path"
+                for m_brace in re.finditer(r"\{(\w+)(?::\w+)?\}", path_pattern):
+                    p_name = m_brace.group(1)
+                    params.add(p_name)
+                    param_sources[p_name] = "path"
+
                 for m in methods:
+                    default_src = "form" if m.upper() in ("POST", "PUT", "PATCH") else "query"
+                    route_param_sources = {
+                        p: param_sources.get(p, default_src) for p in sorted(params)
+                    }
                     self.routes.append(
                         RouteEntry(
                             method=m.upper(),
@@ -224,7 +336,8 @@ class RouteExtractor(ast.NodeVisitor):
                             func_name=node.name,
                             start_line=node.lineno,
                             end_line=end_line,
-                            parameters=sorted(list(visitor.parameters)),
+                            parameters=sorted(list(params)),
+                            param_sources=route_param_sources,
                             called_funcs=sorted(list(visitor.called_funcs)),
                             framework=framework,
                         )
@@ -299,7 +412,14 @@ class RouteMapper:
         # Multi-definition safe store: func_name -> list of (file, start, end, called_funcs, parameters)
         self.func_defs: Dict[str, List[Tuple[str, int, int, Set[str], Set[str]]]] = {}
         self._global_router_prefixes: Dict[str, str] = {}
+        self._router_def_prefixes: Dict[str, str] = {}
+        self._router_mount_prefixes: Dict[str, str] = {}
+        self._pydantic_models: Dict[str, List[str]] = {}
         self._pending_view_routes: List[Tuple[str, str, str]] = []
+
+    def scan_directory(self) -> List[RouteEntry]:
+        """Alias for `scan()` used by CLI and integration runners."""
+        return self.scan()
 
     def scan(self) -> List[RouteEntry]:
         self.routes = []
@@ -308,6 +428,9 @@ class RouteMapper:
         self.func_to_file_lines = {}
         self.func_defs = {}
         self._global_router_prefixes = {}
+        self._router_def_prefixes = {}
+        self._router_mount_prefixes = {}
+        self._pydantic_models = {}
         self._pending_view_routes = []
 
         py_files: List[Tuple[str, str]] = []
@@ -326,9 +449,21 @@ class RouteMapper:
                 elif fname.endswith((".js", ".ts")) and not fname.endswith(".min.js"):
                     js_files.append((full_path, rel_path))
 
-        # Pass 1 on Python files: collect cross-file Blueprint / APIRouter prefixes & function defs
+        # Pass 1 on Python files: collect cross-file Blueprint / APIRouter prefixes & Pydantic models
         for full_path, rel_path in py_files:
             self._precollect_python_prefixes(full_path, rel_path)
+
+        # Combine router definition prefixes and mount (register_blueprint / include_router) prefixes
+        all_router_vars = set(self._router_def_prefixes.keys()) | set(self._router_mount_prefixes.keys())
+        for r_var in all_router_vars:
+            def_p = self._router_def_prefixes.get(r_var, "").rstrip("/")
+            mount_p = self._router_mount_prefixes.get(r_var, "").rstrip("/")
+            if mount_p and def_p and mount_p != def_p and not def_p.startswith(mount_p + "/"):
+                combined = f"{mount_p}/{def_p.lstrip('/')}"
+            else:
+                combined = mount_p or def_p
+            if combined:
+                self._global_router_prefixes[r_var] = combined
 
         # Pass 2 on Python files: extract routes and call graphs
         for full_path, rel_path in py_files:
@@ -341,9 +476,11 @@ class RouteMapper:
         if js_files:
             self._scan_express_files(js_files)
 
-        # Populate called_func_details and compile regex matchers
+        # Populate multi-hop called_func_details, called_functions, and compile regex matchers
         for r in self.routes:
             expanded = self._expand_called_functions(set(r.called_funcs), max_hops=3)
+            r.called_funcs = sorted(list(expanded))
+            r.called_functions = list(r.called_funcs)
             details = list(r.called_func_details)
             seen_defs = {(d.name, d.file, d.start_line) for d in details}
             for h_name in sorted(expanded):
@@ -376,9 +513,31 @@ class RouteMapper:
                 content = f.read()
             tree = ast.parse(content, filename=rel_path)
 
+            local_import_aliases: Dict[str, str] = {}
             for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.asname:
+                            local_import_aliases[alias.asname] = alias.name
+
+            for node in ast.walk(tree):
+                # 0. Collect Pydantic BaseModel class fields for FastAPI JSON body inspection
+                if isinstance(node, ast.ClassDef):
+                    is_model = any(
+                        (isinstance(b, ast.Name) and b.id in ("BaseModel", "Schema"))
+                        or (isinstance(b, ast.Attribute) and b.attr in ("BaseModel", "Schema"))
+                        for b in node.bases
+                    )
+                    if is_model:
+                        fields: List[str] = []
+                        for item in node.body:
+                            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                                fields.append(item.target.id)
+                        if fields:
+                            self._pydantic_models[node.name] = fields
+
                 # 1. bp = Blueprint('orders', __name__, url_prefix='/api')
-                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
                     func_name = ""
                     if isinstance(node.value.func, ast.Name):
                         func_name = node.value.func.id
@@ -390,20 +549,27 @@ class RouteMapper:
                                 prefix = str(kw.value.value).rstrip("/")
                                 for target in node.targets:
                                     if isinstance(target, ast.Name) and prefix:
-                                        self._global_router_prefixes[target.id] = prefix
+                                        self._router_def_prefixes[target.id] = prefix
 
                 # 2. app.register_blueprint(orders_bp, url_prefix='/api')
                 #    app.include_router(orders_router, prefix='/api')
                 elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     if node.func.attr in ("register_blueprint", "include_router") and node.args:
                         router_arg = node.args[0]
-                        router_var = router_arg.id if isinstance(router_arg, ast.Name) else ""
+                        router_var = ""
+                        if isinstance(router_arg, ast.Name):
+                            router_var = router_arg.id
+                        elif isinstance(router_arg, ast.Attribute):
+                            router_var = router_arg.attr
                         if router_var:
                             for kw in node.keywords:
                                 if kw.arg in ("url_prefix", "prefix") and isinstance(kw.value, ast.Constant):
                                     prefix = str(kw.value.value).rstrip("/")
                                     if prefix:
-                                        self._global_router_prefixes[router_var] = prefix
+                                        self._router_mount_prefixes[router_var] = prefix
+                                        orig_name = local_import_aliases.get(router_var)
+                                        if orig_name:
+                                            self._router_mount_prefixes[orig_name] = prefix
         except Exception:
             pass
 
@@ -416,7 +582,7 @@ class RouteMapper:
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     end_line = getattr(node, "end_lineno", node.lineno)
-                    vis = FunctionVisitor(node)
+                    vis = FunctionVisitor(node, pydantic_models=self._pydantic_models)
                     vis.visit(node)
                     self.func_to_file_lines[node.name] = (rel_path, node.lineno, end_line)
                     self.call_graph.setdefault(node.name, set()).update(vis.called_funcs)
@@ -424,7 +590,12 @@ class RouteMapper:
                         (rel_path, node.lineno, end_line, set(vis.called_funcs), set(vis.parameters))
                     )
 
-            extractor = RouteExtractor(full_path, rel_path, global_prefixes=self._global_router_prefixes)
+            extractor = RouteExtractor(
+                full_path,
+                rel_path,
+                global_prefixes=self._global_router_prefixes,
+                pydantic_models=self._pydantic_models,
+            )
             extractor.visit(tree)
             self.routes.extend(extractor.routes)
             self._pending_view_routes.extend(extractor.django_Pending_routes)
@@ -437,11 +608,15 @@ class RouteMapper:
             if defs:
                 rel_path, start_line, end_line, called_funcs, params = defs[0]
                 norm_path = raw_path if raw_path.startswith("/") or raw_path.startswith("^") else "/" + raw_path
+                route_params = set(params)
+                param_sources: Dict[str, str] = {}
                 # Extract path converter params like <int:id>
                 for m in re.finditer(r"<(?:\w+:)?(\w+)>", norm_path):
-                    params.add(m.group(1))
+                    route_params.add(m.group(1))
+                    param_sources[m.group(1)] = "path"
                 for m in re.finditer(r"\(\?P<(\w+)>", norm_path):
-                    params.add(m.group(1))
+                    route_params.add(m.group(1))
+                    param_sources[m.group(1)] = "path"
 
                 for method in ("GET", "POST"):
                     self.routes.append(
@@ -453,7 +628,8 @@ class RouteMapper:
                             func_name=target_func,
                             start_line=start_line,
                             end_line=end_line,
-                            parameters=sorted(list(params)),
+                            parameters=sorted(list(route_params)),
+                            param_sources=param_sources,
                             called_funcs=sorted(list(called_funcs)),
                             framework=framework,
                         )
@@ -648,6 +824,14 @@ class RouteMapper:
             if comp.match(clean_path):
                 return route
 
+        # 3. Fallback for pre-seeded routes when _compiled_matchers was not built via scan()
+        for route in self.routes:
+            if route.matches_url(clean_path, norm_method):
+                return route
+        for route in self.routes:
+            if route.matches_url(clean_path, None):
+                return route
+
         return None
 
     def _expand_called_functions(self, initial_funcs: Set[str], max_hops: int = 3) -> Set[str]:
@@ -673,6 +857,9 @@ class RouteMapper:
         Checks whether a given file_path and line number falls within the route's handler
         or any 1-hop / 2-hop / 3-hop helper function called by that handler.
         """
+        if route.covers_location(file_path, line):
+            return True
+
         norm_target_file = file_path.replace("\\", "/").lstrip("./")
         norm_route_file = route.file_path.replace("\\", "/").lstrip("./")
 
@@ -687,13 +874,15 @@ class RouteMapper:
         for helper_name in expanded_helpers:
             # Check multi-def store first
             for h_file, h_start, h_end, _, _ in self.func_defs.get(helper_name, []):
-                if h_file.replace("\\", "/").lstrip("./") == norm_target_file:
+                norm_h = h_file.replace("\\", "/").lstrip("./")
+                if norm_h == norm_target_file or norm_target_file.endswith("/" + norm_h) or norm_h.endswith("/" + norm_target_file):
                     if h_start <= line <= h_end:
                         return True
             # Fallback to single-def dict
             if helper_name in self.func_to_file_lines:
                 h_file, h_start, h_end = self.func_to_file_lines[helper_name]
-                if h_file.replace("\\", "/").lstrip("./") == norm_target_file:
+                norm_h = h_file.replace("\\", "/").lstrip("./")
+                if norm_h == norm_target_file or norm_target_file.endswith("/" + norm_h) or norm_h.endswith("/" + norm_target_file):
                     if h_start <= line <= h_end:
                         return True
 
@@ -738,3 +927,47 @@ class RouteMapper:
             return True
 
         return False
+
+    def find_routes_for_finding(self, file_path: str, line: int, max_hops: int = 3) -> List[RouteEntry]:
+        """Return all RouteEntries whose handler or 1..3 hop helper covers `(file_path, line)`."""
+        if not file_path or not line:
+            return []
+        matched: List[RouteEntry] = []
+        for r in self.routes:
+            if self.is_line_in_route(file_path, line, r, max_hops=max_hops):
+                matched.append(r)
+        return matched
+
+    def resolve_dast_url(self, url_path: str, method: Optional[str] = None) -> List[RouteEntry]:
+        """Return all RouteEntries matching `url_path` and optional HTTP `method`."""
+        raw = (url_path or "").strip()
+        if "://" in raw:
+            from urllib.parse import urlparse
+            clean_path = urlparse(raw).path or "/"
+        else:
+            clean_path = raw.split("?")[0].strip() or "/"
+        if not clean_path.startswith("/"):
+            clean_path = "/" + clean_path
+
+        norm_method = method.upper().strip() if method else None
+        exact: List[RouteEntry] = []
+        fallback: List[RouteEntry] = []
+        for route, comp in self._compiled_matchers:
+            if comp.match(clean_path):
+                if norm_method is None or route.method == norm_method:
+                    exact.append(route)
+                else:
+                    fallback.append(route)
+        return exact if exact else fallback
+
+
+def build_route_map(source_dir: str) -> List[RouteEntry]:
+    """Module-level entry point used by `api/main.py` to build the AST route map."""
+    mapper = RouteMapper(source_dir)
+    return mapper.scan()
+
+
+def map_routes(source_dir: str) -> List[RouteEntry]:
+    """Alias for `build_route_map`."""
+    return build_route_map(source_dir)
+
