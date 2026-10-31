@@ -3,6 +3,8 @@ CyberForge Core Configuration and Guardrails.
 Enforces Target Safety Lock (PRD Page 2 & 4 Rules).
 """
 
+import ipaddress
+import re
 from typing import List, Set
 from urllib.parse import urlparse
 
@@ -15,6 +17,7 @@ ALLOWED_HOSTS: Set[str] = {
     "::1",
     "0.0.0.0",
     "testserver",
+    "host.docker.internal",
 }
 
 # Supported CWE IDs in this flagship challenge
@@ -65,21 +68,43 @@ CWE_BASE_SEVERITY = {
 
 def is_safe_target_url(url: str) -> bool:
     """
-    Validate that target URL belongs strictly to localhost/loopback or docker network.
-    Refuses scanning public internet domains to protect against disqualification.
+    Validate that target URL belongs strictly to localhost/loopback or local Docker network.
+    Refuses scanning public internet domains or public IPs to protect against disqualification.
     """
-    if not url:
+    if not url or not isinstance(url, str):
         return False
     try:
-        parsed = urlparse(url)
-        hostname = (parsed.hostname or "").lower()
+        parsed = urlparse(url.strip())
+        if parsed.scheme and parsed.scheme.lower() not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower().strip(".")
         if not hostname:
             return False
         if hostname in ALLOWED_HOSTS:
             return True
-        # Allow internal docker network hostnames or private ips if needed
-        if hostname.startswith("127.") or hostname.endswith(".localhost"):
+        if hostname.endswith((".localhost", ".local", ".internal", ".docker")):
+            return True
+        # Check IP address (allow loopback, private RFC1918/Docker bridge, unspecified; block public IPs)
+        try:
+            ip = ipaddress.ip_address(hostname)
+            return bool(ip.is_loopback or ip.is_private or ip.is_unspecified)
+        except ValueError:
+            pass
+        # Allow single-label local Docker Compose service names (e.g. "test-app", "shop", "web")
+        # which have no dots and therefore cannot resolve to public internet FQDNs.
+        if "." not in hostname and re.match(r"^[a-z0-9][a-z0-9_-]*$", hostname):
             return True
         return False
     except Exception:
         return False
+
+
+def assert_safe_target(url: str) -> None:
+    """
+    Raises ValueError if `url` is not a permitted localhost/loopback/local-container target.
+    """
+    if not is_safe_target_url(url):
+        raise ValueError(
+            f"Disqualification Guard: Target URL '{url}' is outside allowed local/loopback scope."
+        )
+

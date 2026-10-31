@@ -38,17 +38,60 @@ class DecoyFilter:
         return False
 
     @staticmethod
+    def _is_int_cast_node(
+        node: ast.AST,
+        var_defs: Optional[Dict[str, ast.AST]] = None,
+        enclosing_code: str = "",
+    ) -> bool:
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "int":
+            return True
+        if isinstance(node, ast.Name):
+            if var_defs and node.id in var_defs:
+                val = var_defs[node.id]
+                if isinstance(val, ast.Call) and isinstance(val.func, ast.Name) and val.func.id == "int":
+                    return True
+            if enclosing_code and re.search(rf"\b{re.escape(node.id)}\s*=\s*int\s*\(", enclosing_code):
+                return True
+        return False
+
+    @staticmethod
+    def _all_interpolations_int_casted(
+        query_node: ast.AST,
+        var_defs: Optional[Dict[str, ast.AST]] = None,
+        enclosing_code: str = "",
+    ) -> bool:
+        target = query_node
+        if isinstance(target, ast.Name) and var_defs and target.id in var_defs:
+            target = var_defs[target.id]
+
+        interp_nodes = []
+        if isinstance(target, ast.JoinedStr):
+            interp_nodes = [v.value for v in target.values if isinstance(v, ast.FormattedValue)]
+        elif isinstance(target, ast.BinOp) and isinstance(target.op, ast.Mod):
+            if isinstance(target.right, (ast.Tuple, ast.List)):
+                interp_nodes = list(target.right.elts)
+            else:
+                interp_nodes = [target.right]
+        elif isinstance(target, ast.Call) and isinstance(target.func, ast.Attribute) and target.func.attr == "format":
+            interp_nodes = list(target.args) + [kw.value for kw in target.keywords]
+
+        if not interp_nodes:
+            return False
+        return all(DecoyFilter._is_int_cast_node(n, var_defs, enclosing_code) for n in interp_nodes)
+
+    @staticmethod
     def is_safe_sql_query(
         call_node: ast.Call,
         enclosing_code: str = "",
         var_defs: Optional[Dict[str, ast.AST]] = None,
     ) -> Tuple[bool, str]:
         """
-        Detects parameterized SQL queries:
+        Detects parameterized SQL queries or strict int() cast guards:
         cursor.execute(sql, (param,))
         cursor.execute(sql, [param])
         cursor.execute(sql, {'param': val})
         db.session.execute(text(sql), params)
+        cursor.execute(f"SELECT * FROM t WHERE id = {int(uid)}")
         """
         if len(call_node.args) >= 2:
             arg1 = call_node.args[0]
@@ -61,6 +104,9 @@ class DecoyFilter:
             if kw.arg in ("params", "parameters", "args", "bind_params"):
                 if call_node.args and not DecoyFilter._is_ast_node_dynamic_string(call_node.args[0], var_defs):
                     return True, "Safe parameterized SQL query with explicit parameters keyword argument"
+
+        if call_node.args and DecoyFilter._all_interpolations_int_casted(call_node.args[0], var_defs, enclosing_code):
+            return True, "Safe SQL query: interpolated parameter strictly cast via int() guard"
 
         return False, ""
 
