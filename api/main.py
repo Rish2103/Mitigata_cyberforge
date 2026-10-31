@@ -301,8 +301,170 @@ def fallback_correlate_findings(
 
 
 # ---------------------------------------------------------------------------
-# FastAPI Routes (FR-10)
+# FastAPI Routes (FR-10) & UI Dashboard Server (FR-8, FR-9)
 # ---------------------------------------------------------------------------
+
+
+def _build_checkpoint1_reference_slice() -> Tuple[List[RouteEntry], List[CanonicalFinding], List[CanonicalFinding]]:
+    """
+    Reference vertical slice for Checkpoint 1 (4:00 PM Mentor Demo) used when the UI
+    triggers a scan before the standalone target web-shop process is booted.
+    """
+    demo_routes = [
+        RouteEntry(
+            method="GET",
+            path_pattern="/api/orders",
+            file="orders.py",
+            func_name="get_orders",
+            start_line=80,
+            end_line=95,
+            params=["id", "sort"],
+            called_funcs=["query_orders_db"],
+        ),
+        RouteEntry(
+            method="GET",
+            path_pattern="/search",
+            file="views.py",
+            func_name="search_catalog",
+            start_line=35,
+            end_line=52,
+            params=["q"],
+            called_funcs=["render_search_results"],
+        ),
+        RouteEntry(
+            method="GET",
+            path_pattern="/api/orders/safe",
+            file="orders.py",
+            func_name="get_orders_safe",
+            start_line=105,
+            end_line=120,
+            params=["id"],
+            called_funcs=[],
+        ),
+    ]
+    demo_sast = [
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="gordon-sast",
+            cwe="CWE-89",
+            severity="Critical",
+            file="orders.py",
+            line=88,
+            func_name="get_orders",
+            param="id",
+            snippet="cursor.execute(f\"SELECT * FROM orders WHERE id = '{id}'\")",
+            evidence="Unparameterized f-string SQL query in get_orders()",
+        ),
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="gordon-sast",
+            cwe="CWE-79",
+            severity="High",
+            file="views.py",
+            line=42,
+            func_name="search_catalog",
+            param="q",
+            snippet="return HTMLResponse(f\"<h2>Results for {q}</h2>\")",
+            evidence="Unescaped user query parameter 'q' rendered directly into HTMLResponse",
+        ),
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="gordon-sast",
+            cwe="CWE-798",
+            severity="High",
+            file="config.py",
+            line=19,
+            func_name="load_payment_gateway",
+            snippet="RAZORPAY_LIVE_SECRET = 'rzp_live_99a8b7c6d5e4f3'",
+            evidence="Hard-coded production API secret in config.py:19",
+        ),
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="gordon-sast",
+            cwe="CWE-89",
+            severity="Info",
+            file="orders.py",
+            line=114,
+            func_name="get_orders_safe",
+            param="id",
+            snippet="cursor.execute('SELECT * FROM orders WHERE id = ?', (order_id,))",
+            is_protected_decoy=True,
+            decoy_reason="B-2 Safe Decoy: Parameterized 2-argument cursor.execute(sql, (order_id,)) prevents SQL injection",
+        ),
+        CanonicalFinding(
+            source="SAST",
+            scanner_name="gordon-sast",
+            cwe="CWE-79",
+            severity="Info",
+            file="views.py",
+            line=64,
+            func_name="search_catalog_safe",
+            param="q",
+            snippet="return HTMLResponse(f\"<h2>Results for {html.escape(q)}</h2>\")",
+            is_protected_decoy=True,
+            decoy_reason="B-2 Safe Decoy: Explicit html.escape(q) neutralizes reflected XSS",
+        ),
+    ]
+    demo_dast = [
+        CanonicalFinding(
+            source="DAST",
+            scanner_name="gordon-dast",
+            cwe="CWE-89",
+            severity="Critical",
+            url="http://localhost:5000/api/orders?id=1%27",
+            method="GET",
+            param="id",
+            payload="1' OR '1'='1",
+            evidence="SQLite syntax error / boolean tautology differential (HTTP 500 -> 200, +412 bytes)",
+            phase="Phase-A-Active",
+        ),
+        CanonicalFinding(
+            source="DAST",
+            scanner_name="gordon-dast",
+            cwe="CWE-79",
+            severity="High",
+            url="http://localhost:5000/search?q=%3Cscript%3Egordon_canary_79%3C/script%3E",
+            method="GET",
+            param="q",
+            payload="<script>gordon_canary_79</script>",
+            evidence="Raw unescaped '<script>gordon_canary_79</script>' reflected in text/html body",
+            phase="Phase-A-Active",
+        ),
+        CanonicalFinding(
+            source="DAST",
+            scanner_name="gordon-dast",
+            cwe="CWE-693",
+            severity="Medium",
+            url="http://localhost:5000/api/orders",
+            method="GET",
+            payload="GET /api/orders (Passive Header Audit)",
+            evidence="Missing Content-Security-Policy and X-Content-Type-Options headers on HTTP 200 response",
+            phase="Phase-B-Passive",
+        ),
+        CanonicalFinding(
+            source="DAST",
+            scanner_name="gordon-dast",
+            cwe="CWE-614",
+            severity="Medium",
+            url="http://localhost:5000/api/orders",
+            method="GET",
+            param="session_id",
+            payload="Set-Cookie: session_id=...",
+            evidence="Session cookie 'session_id' issued without HttpOnly and Secure attributes",
+            phase="Phase-B-Passive",
+        ),
+    ]
+    return demo_routes, demo_sast, demo_dast
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard() -> HTMLResponse:
+    """FR-8 / FR-9: Serve the single-page correlation dashboard (`ui/index.html`)."""
+    ui_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "index.html")
+    if not os.path.exists(ui_path):
+        return HTMLResponse("<h1>ui/index.html not found</h1>", status_code=404)
+    with open(ui_path, "r", encoding="utf-8") as fh:
+        return HTMLResponse(content=fh.read(), status_code=200)
 
 
 @app.get("/health")
@@ -398,6 +560,15 @@ async def create_and_run_scan(
             auth_cookies=request.auth_cookies,
         )
         dast_findings.extend(live_dast)
+
+    # 2b. Optional Checkpoint 1 Demo Slice Fallback when standalone target app is not running yet
+    if getattr(request, "seed_checkpoint_slice_if_empty", False) and not (
+        routes or sast_findings or dast_findings
+    ):
+        demo_routes, demo_sast, demo_dast = _build_checkpoint1_reference_slice()
+        routes.extend(demo_routes)
+        sast_findings.extend(demo_sast)
+        dast_findings.extend(demo_dast)
 
     # 3. Correlate SAST + DAST Findings (FR-5, FR-6, FR-7, FR-9)
     correlated_issues: Optional[List[CorrelatedIssue]] = None

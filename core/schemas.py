@@ -731,6 +731,10 @@ class ScanRequest(BaseModel):
     seeded_dast_findings: List[CanonicalFinding] = Field(
         default_factory=list, description="Optional pre-scanned or B-6 imported DAST findings"
     )
+    seed_checkpoint_slice_if_empty: bool = Field(
+        default=False,
+        description="When True and no live findings are discovered, seed Checkpoint 1 reference slice.",
+    )
 
 
 

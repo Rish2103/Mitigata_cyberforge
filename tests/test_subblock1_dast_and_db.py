@@ -818,3 +818,57 @@ def test_multi_app_sqlite_isolation() -> None:
         assert app1_rows[0].id != app2_rows[0].id
 
 
+def test_subblock2_ui_dashboard_and_checkpoint1_slice() -> None:
+    """
+    Verify Sub-block 2 (`feat/b-api-ui`):
+      - `GET /` serves `ui/index.html` containing Sarvam AI design tokens and Apple fluid spring inspector.
+      - `POST /scans` with `seed_checkpoint_slice_if_empty=True` populates Confirmed, Code-only, Runtime-only,
+        and B-2 Safe Decoys idempotently across consecutive runs.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "ui_slice.db")
+        os.environ["GORDON_DB_PATH"] = db_path
+        try:
+            with TestClient(gordon_api_app) as client:
+                # 1. Verify GET / serves ui/index.html with Sarvam + Apple design system
+                ui_res = client.get("/")
+                assert ui_res.status_code == 200
+                assert "text/html" in ui_res.headers.get("content-type", "")
+                html_body = ui_res.text
+                assert "--color-sr-indigo-900" in html_body
+                assert "--font-season-mix" in html_body
+                assert "animateSheetSpring" in html_body
+                assert "rubberband" in html_body
+
+                # 2. Trigger Checkpoint 1 vertical slice twice and verify FR-6 idempotency
+                scan1 = client.post(
+                    "/scans",
+                    json={
+                        "app_name": "checkpoint1-demo",
+                        "run_live_dast": False,
+                        "seed_checkpoint_slice_if_empty": True,
+                    },
+                )
+                assert scan1.status_code == 200
+                s1_data = scan1.json()
+                assert s1_data["confirmed_count"] == 2
+                assert s1_data["code_only_count"] == 1
+                assert s1_data["runtime_only_count"] == 2
+                assert s1_data["safe_decoys_suppressed"] == 2
+
+                scan2 = client.post(
+                    "/scans",
+                    json={
+                        "app_name": "checkpoint1-demo",
+                        "run_live_dast": False,
+                        "seed_checkpoint_slice_if_empty": True,
+                    },
+                )
+                assert scan2.status_code == 200
+                s2_data = scan2.json()
+                assert s2_data["total_issues"] == s1_data["total_issues"] == 5
+        finally:
+            os.environ.pop("GORDON_DB_PATH", None)
+
+
+
