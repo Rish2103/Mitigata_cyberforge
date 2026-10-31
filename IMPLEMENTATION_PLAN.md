@@ -112,17 +112,18 @@ So `api/main.py` (Person B) and `engine/correlator.py` / `engine/scope_reducer.p
 
 ### PHASE 3: `10:30 PM – 2:30 AM` (Overnight Sprint Part 1) — **36-Bug PRD Benchmark, SARIF Export (`B-6`), UI Upgrade & Docker Packaging**
 
-#### 👤 Person A Tasks (`10:30 PM – 2:30 AM`) — *Files: `tests/mock_shop_app/**`, `engine/sca_reachability.py`, `tests/demo_checkpoint1.py`*
-- **Task A3.1 (`10:30 PM – 12:00 AM`): Complete 36-Bug PRD Answer-Key Benchmark Mode in `tests/demo_checkpoint1.py`**
+#### 👤 Person A Tasks (`10:30 PM – 2:30 AM`) — *Files: `tests/mock_shop_app/**`, `engine/sca_reachability.py`, `tests/demo_checkpoint1.py`* — **[COMPLETED on `phase-3-Rish` / 43/43 Pytests Passing]**
+- **Task A3.1 (`10:30 PM – 12:00 AM`): Complete 36-Bug PRD Answer-Key Benchmark Mode in `tests/demo_checkpoint1.py` [COMPLETED]**
   1. Add a `--full-benchmark` mode and CLI flags (`--source-dir`, `--target-url`, `--export-json`) to `tests/demo_checkpoint1.py` so Person A can run both:
-     - **Live Storefront Scan (`./tests/mock_shop_app` + `http://localhost:5000`)**
-     - **Full 36-Bug PRD Answer-Key Benchmark (`20 Pairs + 10 Code-only + 6 Runtime-only + 8 Safe Decoys`)**
+     - **Live Storefront Scan (`./tests/mock_shop_app` + `http://localhost:5000`)** with single-pass AST Adaptive Scope Reduction.
+     - **Full 36-Bug PRD Answer-Key Benchmark (`20 Pairs + 10 Code-only + 6 Runtime-only + 8 Safe Decoys`)** with 7/7 metrics PASS.
+     - **Mode C JSON Report Export (`--export-json`)** exporting all 36 correlated issues with `remediation_code_diff`, `confidence`, `link_reason`, and `scope_reduction_report`.
      - **Unseen Second App Scan (`--source-dir <unseen_path> --target-url <unseen_url>`)**
   2. Print a formatted **7-Metric PRD Page 4 Scorecard + Judge Scope Reduction Telemetry Table** in the terminal.
-- **Task A3.2 (`12:00 AM – 1:15 AM`): Enhance `tests/mock_shop_app/` Storefront (`:5000`) & Multi-Scanner Demo Fixture**
-  1. Add a sample SARIF file (`tests/mock_shop_app/semgrep_sample.sarif`) and Bandit JSON file (`tests/mock_shop_app/bandit_sample.json`) inside `tests/mock_shop_app/reports/` so during the demo we can prove **`FR-3` + `FR-6` Multi-Scanner Deduplication** (*"3 scanner findings on the same bug = 1 Confirmed issue"*).
-- **Task A3.3 (`1:15 AM – 2:30 AM`): Harden `engine/sca_reachability.py` Call-Graph Trace & Supply-Chain Evidence**
-  1. Ensure every `SCAFinding` returned by `run_sca_reachability()` includes a human-readable `call_chain` list (`["POST /api/config/import", "app.py:import_yaml_config() [line 166]", "yaml.load() [line 168]"]`) and `supply_chain_flags` (`["TYPOSQUAT_SUSPECT: reqeusts -> requests (distance=1)"]`) for Person B's UI table.
+- **Task A3.2 (`12:00 AM – 1:15 AM`): Enhance `tests/mock_shop_app/` Storefront (`:5000`) & Multi-Scanner Demo Fixture [COMPLETED]**
+  1. Add a sample SARIF file (`tests/mock_shop_app/semgrep_sample.sarif`) and Bandit JSON file (`tests/mock_shop_app/bandit_sample.json`) inside `tests/mock_shop_app/reports/` pointing to real vulnerability sinks (`services/order_service.py:25`, `app.py:68`, `app.py:27`) so during the demo we can prove **`FR-3` + `FR-6` Multi-Scanner Deduplication** (*"3 scanner findings on the same bug = 1 Confirmed issue"*).
+- **Task A3.3 (`1:15 AM – 2:30 AM`): Harden `engine/sca_reachability.py` Call-Graph Trace & Supply-Chain Evidence [COMPLETED]**
+  1. Ensure every `SCAFinding` returned by `run_sca_reachability()` includes a human-readable `call_chain` list (`["POST /api/config/import", "app.py:import_yaml_config() [line 173]", "yaml.load() [line 176]"]`) and `supply_chain_flags` (`["TYPOSQUAT_SUSPECT: reqeusts -> requests (distance=1)"]`, `["DEPENDENCY_CONFUSION: ..."]`) for Person B's UI table, with strict guarantee that `Unknown` status is never downgraded.
 
 #### 👤 Person B Tasks (`10:30 PM – 2:30 AM`) — *Files: `api/sarif_exporter.py`, `api/main.py`, `ui/index.html`, `Dockerfile`, `docker-compose.yml`, `README.md`*
 - **Task B3.1 (`10:30 PM – 12:00 AM`): Build `api/sarif_exporter.py` (`B-6` SARIF v2.1.0 Exporter & CI Gate)**

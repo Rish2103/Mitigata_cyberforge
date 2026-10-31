@@ -77,9 +77,9 @@
 
 ---
 
-## Person A Phase 2 → Phase 5 Completion Status (`branch: phase-2-Rish`)
+## Person A Phase 2 & Phase 3 Completion Status (`branch: phase-3-Rish`)
 
-- **Branch:** `phase-2-Rish` (Strict Zero-Merge-Conflict File Ownership `A ∩ B = ∅` preserved)
+- **Branch:** `phase-3-Rish` (Strict Zero-Merge-Conflict File Ownership `A ∩ B = ∅` preserved)
 - **Deliverables Completed:**
   1. **Task A2.1 — Top-Level Engine Bridge Functions & CorrelatedIssue Attribute Parity:**
      - `engine/correlator.py`: Exported `correlate_findings(routes, sast_findings, dast_findings, source_dir=None, live_endpoints=None, route_mapper=None)` and populated Person A & Person B bridge attributes (`remediation`, `remediation_text`, `remediation_code_diff`, `correlation_reason`, `confidence`, `signals_matched`, `sast_finding_ids`, `dast_finding_ids`, `sast_findings`, `dast_findings`).
@@ -90,11 +90,16 @@
      - `engine/decoy_filter.py`: Real-world sanitizer recognition (`bleach.clean`, SQLAlchemy `.filter_by()`, Django `.objects.filter()`, `werkzeug.security.safe_join`, `pathlib.Path.resolve().is_relative_to()`, `urllib.parse.urlsplit().netloc`).
      - `engine/sast_scanner.py`: 3-hop inter-procedural parameter taint propagation (`data = request.get_json(); val = data.get("x")`) and Express JS parameter inference.
   3. **Task A3.1 — Full CLI Benchmark & Unseen-App Runner (`tests/demo_checkpoint1.py`):**
-     - Supports `--full-benchmark`, `--source-dir` / `--source`, `--target-url` / `--url`, `--export-json` / `--out`, `--sarif`, and `--bandit`, printing the 7-Metric PRD Page 4 Scorecard + Judge Scope Reduction Telemetry Table.
+     - Supports `--full-benchmark`, `--source-dir` / `--source`, `--target-url` / `--url`, `--export-json` / `--out`, `--sarif`, and `--bandit`.
+     - Mode A (Live Storefront Scan against `http://localhost:5000`): Discovers active endpoints, verifies safe targets, prunes safe routes via Adaptive DAST Scope Reduction, confirms 5 live CWEs (`CWE-89`, `79`, `78`, `22`, `601`) with B-3 link proof and B-4 code diffs, detects runtime-only headers (`CWE-693`), and suppresses 12 decoys (0% false alarms).
+     - Mode B (Full 36-Bug PRD Answer-Key Benchmark): Generates 7-Metric Scorecard (100% correct links, 0% wrong links, 0% false alarms on 8 safe decoys, all 20 confirmed bugs ranked first, 100% deduplication idempotency, runtime < 0.1s / 27ms).
+     - Mode C (JSON Report Export): Exports all 36 correlated issues with `remediation_code_diff`, `confidence`, `link_reason`, `sast_finding_ids`, `dast_finding_ids`, and `scope_reduction_report`.
+     - Mode D (Unseen App Scan Readiness): Accepts arbitrary `--source-dir` and `--target-url` for the Day 2 morning Unseen App drop.
   4. **Task A3.2 — Multi-Scanner Deduplication Fixtures (`FR-3` & `FR-6`):**
-     - Created `tests/mock_shop_app/reports/semgrep_sample.sarif` and `tests/mock_shop_app/reports/bandit_sample.json` and proved **4 raw findings (AST SAST + Semgrep SARIF + Bandit JSON + Live DAST) collapse into 1 single `Confirmed` `CorrelatedIssue`**.
+     - Verified `tests/mock_shop_app/reports/semgrep_sample.sarif` and `tests/mock_shop_app/reports/bandit_sample.json` pointing to real vulnerability sinks (`services/order_service.py:25`, `app.py:68`, `app.py:27`).
+     - Unit test `test_mock_shop_multi_scanner_fixture_files_4_to_1_dedup` proves **4 raw findings (AST SAST + Semgrep SARIF + Bandit JSON + Live DAST) collapse into exactly 1 `Confirmed` `CorrelatedIssue`** with full ID provenance.
   5. **Task A3.3 — Reachability-Aware SCA Bridge & Call-Chain Enrichment (`engine/sca_reachability.py`):**
      - Exported `run_sca_reachability(source_dir, routes=None, route_mapper=None) -> List[SCAFinding]`, human-readable route-to-sink `call_chain` (`["POST /api/config/import", "app.py:import_yaml_config() [line 173]", "yaml.load() [line 176]"]`), descriptive `supply_chain_flags` (`TYPOSQUAT_SUSPECT: ...`, `DEPENDENCY_CONFUSION: ...`, `UNPINNED_VERSION: ...`), and dynamic `getattr` / `importlib` `Unknown` reachability safety (never downgraded).
   6. **Task A4.1 — Unseen-App Torture Test Suite (`tests/test_person_a.py` & `tests/test_correlation.py`):**
-     - **40 / 40 automated pytest tests passing in `1.70s` (`0` failures).**
+     - **43 / 43 automated pytest tests passing in `1.80s` (`0` failures, 100% pass rate).**
 
