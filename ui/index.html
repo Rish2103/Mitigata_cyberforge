@@ -132,48 +132,65 @@
     .brand-group {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 11px;
       text-decoration: none;
       color: inherit;
       cursor: pointer;
     }
 
     .brand-mark {
-      width: 30px;
-      height: 30px;
-      border-radius: var(--radius-sm);
+      width: 34px;
+      height: 34px;
+      border-radius: var(--radius-md);
       background: var(--color-sr-indigo-900);
-      color: #ffffff;
+      border: 1px solid rgba(61, 82, 213, 0.35);
+      box-shadow: 0 1px 3px rgba(17, 22, 37, 0.14);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: var(--font-mono);
-      font-weight: 600;
-      font-size: 12px;
-      letter-spacing: 0.04em;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .brand-mark svg {
+      width: 26px;
+      height: 26px;
+      display: block;
     }
 
     .brand-title {
       font-family: var(--font-season-mix);
-      font-size: 19px;
+      font-size: 20px;
       font-weight: 600;
       letter-spacing: -0.02em;
       color: var(--color-sr-indigo-900);
-    }
-
-    .brand-subtitle {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-family: var(--font-mono);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      line-height: 1.15;
     }
 
     .topbar-controls {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
+    }
+
+    .topbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .topbar-divider {
+      width: 1px;
+      height: 22px;
+      background: var(--border-strong);
+      margin: 0 2px;
+    }
+
+    @media (max-width: 900px) {
+      .topbar-divider {
+        display: none;
+      }
     }
 
     .security-badge {
@@ -1005,30 +1022,34 @@
   <!-- Top Navigation -->
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand-group" href="/" onclick="handleNavClick(event, '/')">
-        <div class="brand-mark">CF</div>
-        <div>
-          <div class="brand-title">CyberForge Correlate</div>
-          <div class="brand-subtitle">AST Route + SAST + 2-Phase DAST + SCA Engine</div>
+      <a class="brand-group" href="/" onclick="handleNavClick(event, '/')" aria-label="CyberForge Correlate Home">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 4.2L29.2 9.2V18.2C29.2 25.1 24.4 30.2 18 32.2C11.6 30.2 6.8 25.1 6.8 18.2V9.2L18 4.2Z" fill="#1A2138" stroke="#3D52D5" stroke-width="1.9"/>
+            <path d="M13 14L18 19L23 14M18 19V25.5" stroke="#EAEEFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="13" cy="14" r="2.2" fill="#3D52D5" stroke="#FFFFFF" stroke-width="1.1"/>
+            <circle cx="23" cy="14" r="2.2" fill="#3D52D5" stroke="#FFFFFF" stroke-width="1.1"/>
+            <circle cx="18" cy="25.5" r="2.4" fill="#10B981" stroke="#FFFFFF" stroke-width="1.1"/>
+          </svg>
         </div>
+        <div class="brand-title">CyberForge Correlate</div>
       </a>
 
       <div class="topbar-controls">
-        <div id="scopeLockBadge" class="security-badge" title="Target Safety Lock restricts active DAST probing to authorized loopback and container targets">
-          <span class="status-dot"></span>
-          <span id="scopeLockText">Scope Lock: Loopback Enforced</span>
+        <div class="topbar-group">
+          <a class="btn" id="btnOpenLiveShop" href="http://localhost:5000" target="_blank" rel="noopener noreferrer" title="Open Live Vulnerable Storefront on port 5000">Live Storefront (:5000)</a>
+          <button type="button" class="btn" id="btnOpenGuide" onclick="openOnboardingModal()">System Guide</button>
         </div>
-        <div id="credentialIsolationBadge" class="security-badge neutral" title="Zero API keys or secrets are embedded in client-side code">
-          <span>API Keys: Server-Isolated</span>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <div class="topbar-group">
+          <button type="button" class="btn" id="btnExportJson" onclick="downloadJsonReport()" title="Export complete correlation report as JSON">Export JSON</button>
+          <button type="button" class="btn" id="btnExportSarif" onclick="downloadSarifReport()" title="Download OASIS SARIF v2.1.0 report">Download SARIF v2.1.0</button>
         </div>
-        <div id="ciGateBadge" class="security-badge neutral" title="Deterministic CI/CD Gate status (/scans/{id}/ci-gate)">
-          <span id="ciGateBadgeText">CI Gate: Evaluating</span>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <div class="topbar-group">
+          <button type="button" class="btn" id="btnIdempotency" onclick="runIdempotencyCheck()">Verify Idempotency (2x)</button>
+          <button type="button" class="btn btn-primary" id="btnRunScan" onclick="triggerScan(false)">Run Correlation Scan</button>
         </div>
-        <a class="btn" id="btnOpenLiveShop" href="http://localhost:5000" target="_blank" rel="noopener noreferrer" title="Open Live Vulnerable Storefront on port 5000">Live Storefront (:5000)</a>
-        <button type="button" class="btn" id="btnExportSarif" onclick="downloadSarifReport()" title="Download OASIS SARIF v2.1.0 report">Download SARIF v2.1.0</button>
-        <button type="button" class="btn" id="btnOpenGuide" onclick="openOnboardingModal()">System Guide</button>
-        <button type="button" class="btn" id="btnIdempotency" onclick="runIdempotencyCheck()">Verify Idempotency (2x)</button>
-        <button type="button" class="btn btn-primary" id="btnRunScan" onclick="triggerScan(false)">Run Correlation Scan</button>
       </div>
     </div>
   </header>
@@ -1859,6 +1880,47 @@
           ? `CI Gate: FAIL (Exit 1 : ${ciGateRes.blocking_confirmed_count || 0} Confirmed)`
           : 'CI Gate: PASS (Exit 0)';
         gateBadge.title = escapeHtml(ciGateRes.reason || 'Deterministic CI/CD Gate');
+      }
+    }
+
+    async function downloadJsonReport() {
+      const selScanId = document.getElementById('selectScanHistory')?.value;
+      const latestScan = appState.scans && appState.scans.length > 0 ? appState.scans[0] : null;
+      const latestScanId = latestScan ? latestScan.scan_id : null;
+      const targetScanId = selScanId || latestScanId;
+      try {
+        const selectedScan = appState.scans.find((s) => String(s.scan_id || s.id) === String(targetScanId)) || latestScan || null;
+        const jsonReport = {
+          engine: 'CyberForge Correlate v1.0',
+          generated_at: new Date().toISOString(),
+          scan_id: targetScanId || 'latest',
+          scan_summary: selectedScan,
+          scope_reduction: selectedScan && selectedScan.scope_reduction ? selectedScan.scope_reduction : null,
+          counts: {
+            total_issues: appState.issues.length,
+            confirmed_count: appState.issues.filter((i) => i.status === 'Confirmed').length,
+            code_only_count: appState.issues.filter((i) => i.status === 'Code only' || i.status === 'NeedsVerification').length,
+            runtime_only_count: appState.issues.filter((i) => i.status === 'Runtime only' || i.status === 'Contradicted').length,
+            suppressed_decoys_count: appState.decoys.length,
+            sca_findings_count: appState.scaFindings.length,
+            ast_routes_count: appState.routes.length
+          },
+          correlated_issues: appState.issues,
+          ast_routes: appState.routes,
+          suppressed_decoys: appState.decoys,
+          sca_findings: appState.scaFindings
+        };
+        const blob = new Blob([JSON.stringify(jsonReport, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cyberforge-scan-${targetScanId || 'latest'}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showErrorBanner('JSON Report Export Failed', err.message);
       }
     }
 

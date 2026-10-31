@@ -1504,9 +1504,10 @@ def test_phase3_b32_and_b33_ui_banner_remediation_diff_and_packaging() -> None:
         "buildBeforeAfterRemediationDiff",
         "Before / After Code Remediation Diff (B-4)",
         "B-1 Auto-Verified",
+        "downloadJsonReport",
+        "Export JSON",
         "downloadSarifReport",
         "Download SARIF v2.1.0",
-        "ciGateBadge",
         "http://localhost:5000",
     ):
         assert expected_token in ui_html, f"Missing expected UI token: {expected_token}"

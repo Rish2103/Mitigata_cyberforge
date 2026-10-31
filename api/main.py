@@ -63,10 +63,14 @@ app.add_middleware(
 _default_store: Optional[DatabaseStore] = None
 
 FAVICON_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">'
-    '<rect width="32" height="32" rx="4" fill="#13122B"/>'
-    '<path d="M8 10H24M8 16H20M8 22H16" stroke="#F8FAFC" stroke-width="2.5" stroke-linecap="square"/>'
-    '<rect x="20" y="19" width="5" height="5" fill="#15803D"/>'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">'
+    '<rect width="36" height="36" rx="6" fill="#111625"/>'
+    '<path d="M18 5.5L28.5 10.2V18.4C28.5 24.9 24.0 29.7 18 31.5C12.0 29.7 7.5 24.9 7.5 18.4V10.2L18 5.5Z" '
+    'fill="#1A2138" stroke="#3D52D5" stroke-width="1.8"/>'
+    '<path d="M13.5 14.5L18 19L22.5 14.5M18 19V25" stroke="#EAEEFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<circle cx="13.5" cy="14.5" r="2.1" fill="#3D52D5" stroke="#FFFFFF" stroke-width="1.1"/>'
+    '<circle cx="22.5" cy="14.5" r="2.1" fill="#3D52D5" stroke="#FFFFFF" stroke-width="1.1"/>'
+    '<circle cx="18" cy="25" r="2.3" fill="#10B981" stroke="#FFFFFF" stroke-width="1.1"/>'
     '</svg>'
 )
 
