@@ -1,0 +1,8 @@
+# Mock Shop App Dependencies for Page 4 Reachability-Aware SCA Testing
+flask==2.2.5
+werkzeug==2.2.3 # via flask
+pyyaml==5.3.1
+requests==2.28.0
+urllib3==1.26.15 # via requests
+reqeusts==2.28.0
+mitigata-internal-auth>=1.0.0

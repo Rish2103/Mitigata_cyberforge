@@ -35,6 +35,14 @@ CWE_NAMES = {
     "CWE-22": "Path Traversal",
     "CWE-601": "Open Redirect",
     "CWE-798": "Hard-coded Secret",
+    # Supplementary runtime-only & code-only CWEs
+    "CWE-693": "Protection Mechanism Failure (Missing Security Headers)",
+    "CWE-614": "Sensitive Cookie in HTTPS Session Without 'Secure' Attribute",
+    "CWE-1004": "Sensitive Cookie Without 'HttpOnly' Flag",
+    "CWE-942": "Permissive Cross-domain Policy with Untrusted Domains (CORS)",
+    "CWE-327": "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-489": "Active Debug Code",
+    "CWE-200": "Exposure of Sensitive Information to an Unauthorized Actor",
 }
 
 # Base Risk Scores (0-100) before exploitability weighting
@@ -45,6 +53,13 @@ CWE_BASE_SEVERITY = {
     "CWE-22": ("High", 75.0),
     "CWE-601": ("Medium", 50.0),
     "CWE-798": ("High", 70.0),
+    "CWE-693": ("Medium", 45.0),
+    "CWE-614": ("Medium", 45.0),
+    "CWE-1004": ("Medium", 45.0),
+    "CWE-942": ("Medium", 55.0),
+    "CWE-327": ("Medium", 55.0),
+    "CWE-489": ("Medium", 50.0),
+    "CWE-200": ("Medium", 50.0),
 }
 
 
