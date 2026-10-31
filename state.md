@@ -73,4 +73,4 @@
 - **Judge Feedback at Checkpoint 1:**
   1. **Single-Pass Parsing & Time Complexity:** Confirm DAST never re-parses the codebase and that running SAST + DAST maintains linear `O(N + R)` complexity.
   2. **Runtime-Verified DAST Scope Reduction:** When the static AST Route Map is verified as an exact replica of the live runtime endpoints (`Code Route == Live Runtime Route`), dynamically prune safe/decoy routes from active DAST fuzzing and probe only SAST-flagged `(route, parameter, CWE)` sinks—while keeping full active DAST probing on any drifted/unmapped runtime routes.
-- **Renewed Plan Location:** See [IMPLEMENTATION_PLAN.md](file:///d:/Mitigata/IMPLEMENTATION_PLAN.md) for the complete Phase 2 → Phase 5 plan for **Person A**.
+- **Renewed Plan Location:** See [IMPLEMENTATION_PLAN.md](file:///d:/Mitigata/IMPLEMENTATION_PLAN.md) for the complete Team-of-2 (`Person A` + `Person B`) Phase 2 → Phase 5 zero-merge-conflict implementation plan.
