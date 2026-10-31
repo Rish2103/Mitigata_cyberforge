@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   web-shop:
     build:
@@ -17,6 +15,22 @@ services:
           - test-app
           - mock-shop
 
+  unseen-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cyberforge-unseen-billing
+    working_dir: /app/tests/unseen_app_sim
+    command: ["python", "-m", "flask", "--app", "app", "run", "--host", "0.0.0.0", "--port", "5001"]
+    ports:
+      - "5001:5001"
+    networks:
+      cyberforge-net:
+        aliases:
+          - unseen-app
+          - unseen_app
+          - second-app
+
   cyberforge-correlate:
     build:
       context: .
@@ -26,11 +40,12 @@ services:
     command: ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       - CYBERFORGE_DB_PATH=/app/cyberforge_correlate.db
-      - CYBERFORGE_ALLOWED_HOSTS=localhost,127.0.0.1,::1,web-shop,test-app,mock-shop
+      - CYBERFORGE_ALLOWED_HOSTS=localhost,127.0.0.1,::1,web-shop,test-app,mock-shop,unseen-app,unseen_app,second-app
     ports:
       - "8000:8000"
     depends_on:
       - web-shop
+      - unseen-app
     networks:
       - cyberforge-net
 

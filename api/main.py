@@ -105,6 +105,31 @@ def _is_tcp_port_reachable(url: str, timeout: float = 0.15) -> bool:
         return False
 
 
+def _resolve_reachable_target_url(url: str) -> str:
+    """
+    If `url` points to `127.0.0.1:5000` or `127.0.0.1:5001` from the browser UI while
+    running inside Docker Compose, transparently route to the sibling container hostname
+    (`http://web-shop:5000` or `http://unseen-app:5001`) when reachable on `cyberforge-net`.
+    """
+    if _is_tcp_port_reachable(url):
+        return url
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+        if host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            docker_Fallbacks = {
+                5000: "http://web-shop:5000",
+                5001: "http://unseen-app:5001",
+            }
+            candidate = docker_Fallbacks.get(port)
+            if candidate and _is_tcp_port_reachable(candidate):
+                return candidate
+    except Exception:
+        pass
+    return url
+
+
 def _load_local_wsgi_transport(source_dir: Optional[str]) -> Optional[_AsyncWSGITransport]:
     """
     When `run_live_dast=True` is requested against a local Flask app (such as `tests/mock_shop_app`)
@@ -124,8 +149,14 @@ def _load_local_wsgi_transport(source_dir: Optional[str]) -> Optional[_AsyncWSGI
         if not os.path.isfile(app_py):
             continue
         try:
-            if folder not in sys.path:
-                sys.path.insert(0, folder)
+            if folder in sys.path:
+                sys.path.remove(folder)
+            sys.path.insert(0, folder)
+            for mod_name in list(sys.modules.keys()):
+                if mod_name in ("routes", "services", "models") or mod_name.startswith(
+                    ("routes.", "services.", "models.")
+                ):
+                    sys.modules.pop(mod_name, None)
             spec = importlib.util.spec_from_file_location("cyberforge_local_target_app", app_py)
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
@@ -747,11 +778,12 @@ async def create_and_run_scan(
     # 2. Person B 2-Phase Async DAST Scanner (FR-2) with Adaptive Scope Reduction (Task B2.1)
     wsgi_transport: Optional[httpx.AsyncBaseTransport] = None
     scope_reduction_report: Optional[ScopeReductionReport] = None
-    if validated_url and request.run_live_dast:
-        if not _is_tcp_port_reachable(validated_url):
+    effective_target_url = _resolve_reachable_target_url(validated_url) if validated_url else None
+    if effective_target_url and request.run_live_dast:
+        if not _is_tcp_port_reachable(effective_target_url):
             wsgi_transport = _load_local_wsgi_transport(request.source_dir)
         dast_scanner_instance = DASTScanner(
-            base_url=validated_url,
+            base_url=effective_target_url,
             auth_headers=request.auth_headers,
             auth_cookies=request.auth_cookies,
             transport=wsgi_transport,
@@ -820,15 +852,15 @@ async def create_and_run_scan(
                 )
 
     # 3b. Optional B-1 Auto-Verification Loop
-    if validated_url and getattr(request, "enable_auto_verify", True):
+    if effective_target_url and getattr(request, "enable_auto_verify", True):
         try:
             from engine import auto_verify  # type: ignore
 
             if hasattr(auto_verify, "auto_verify_code_only_issues"):
-                if wsgi_transport is None and not _is_tcp_port_reachable(validated_url):
+                if wsgi_transport is None and not _is_tcp_port_reachable(effective_target_url):
                     wsgi_transport = _load_local_wsgi_transport(request.source_dir)
                 correlated_issues = await auto_verify.auto_verify_code_only_issues(
-                    base_url=validated_url,
+                    base_url=effective_target_url,
                     routes=routes,
                     issues=correlated_issues,
                     auth_headers=request.auth_headers,
